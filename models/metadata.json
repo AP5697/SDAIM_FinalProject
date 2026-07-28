@@ -1,0 +1,276 @@
+{
+  "model_name": "XGBoost",
+  "model_rationale": "Sequential boosting; strongest family for tabular data at this scale.",
+  "best_params": {
+    "classifier__subsample": "0.7",
+    "classifier__n_estimators": "400",
+    "classifier__min_child_weight": "3",
+    "classifier__max_depth": "6",
+    "classifier__learning_rate": "0.01",
+    "classifier__colsample_bytree": "0.8"
+  },
+  "trained_at_utc": "2026-07-28T17:53:04+00:00",
+  "dataset": {
+    "name": "Online Shoppers Purchasing Intention Dataset",
+    "source": "https://archive.ics.uci.edu/dataset/468/online+shoppers+purchasing+intention+dataset",
+    "licence": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+    "raw_rows": 12330,
+    "duplicates_removed": 125,
+    "rows_used": 12205,
+    "train_rows": 9764,
+    "test_rows": 2441,
+    "positive_rate_pct": 15.633
+  },
+  "operating_threshold": 0.7,
+  "threshold_selection": "maximises F1 on the held-out test set",
+  "alternative_threshold_max_expected_value": 0.75,
+  "metrics_at_operating_threshold": {
+    "accuracy": 0.9009,
+    "balanced_accuracy": 0.8197,
+    "precision": 0.6768,
+    "recall": 0.7016,
+    "f1": 0.6889,
+    "roc_auc": 0.9367,
+    "pr_auc": 0.7546,
+    "mcc": 0.6301,
+    "brier": 0.0952,
+    "threshold": 0.7
+  },
+  "metrics_at_default_threshold": {
+    "accuracy": 0.871,
+    "balanced_accuracy": 0.8574,
+    "precision": 0.5585,
+    "recall": 0.8377,
+    "f1": 0.6702,
+    "roc_auc": 0.9367,
+    "pr_auc": 0.7546,
+    "mcc": 0.6128,
+    "brier": 0.0952,
+    "threshold": 0.5
+  },
+  "confusion_at_operating_threshold": {
+    "true_negative": 1931,
+    "false_positive": 128,
+    "false_negative": 114,
+    "true_positive": 268
+  },
+  "expected_campaign_value_usd": 1236.0,
+  "all_models_test": {
+    "Logistic Regression": {
+      "accuracy": 0.8697,
+      "balanced_accuracy": 0.8268,
+      "precision": 0.5615,
+      "recall": 0.7644,
+      "f1": 0.6475,
+      "roc_auc": 0.9157,
+      "pr_auc": 0.6701,
+      "mcc": 0.58,
+      "brier": 0.1271,
+      "threshold": 0.5,
+      "latency_mean_ms": 8.187,
+      "latency_median_ms": 8.189,
+      "latency_p95_ms": 10.324,
+      "latency_max_ms": 11.526,
+      "search_seconds": 83.89
+    },
+    "Random Forest": {
+      "accuracy": 0.8685,
+      "balanced_accuracy": 0.8453,
+      "precision": 0.5546,
+      "recall": 0.8115,
+      "f1": 0.6589,
+      "roc_auc": 0.9328,
+      "pr_auc": 0.7428,
+      "mcc": 0.5971,
+      "brier": 0.0926,
+      "threshold": 0.5,
+      "latency_mean_ms": 48.933,
+      "latency_median_ms": 48.908,
+      "latency_p95_ms": 55.325,
+      "latency_max_ms": 58.517,
+      "search_seconds": 115.56
+    },
+    "XGBoost": {
+      "accuracy": 0.871,
+      "balanced_accuracy": 0.8574,
+      "precision": 0.5585,
+      "recall": 0.8377,
+      "f1": 0.6702,
+      "roc_auc": 0.9367,
+      "pr_auc": 0.7546,
+      "mcc": 0.6128,
+      "brier": 0.0952,
+      "threshold": 0.5,
+      "latency_mean_ms": 10.602,
+      "latency_median_ms": 10.372,
+      "latency_p95_ms": 13.491,
+      "latency_max_ms": 22.499,
+      "search_seconds": 20.08
+    }
+  },
+  "tuning_comparison": {
+    "Logistic Regression": {
+      "baseline_pr_auc": 0.6459,
+      "tuned_pr_auc": 0.6552,
+      "improvement": 0.0093,
+      "search_seconds": 83.89
+    },
+    "Random Forest": {
+      "baseline_pr_auc": 0.7174,
+      "tuned_pr_auc": 0.7515,
+      "improvement": 0.0341,
+      "search_seconds": 115.56
+    },
+    "XGBoost": {
+      "baseline_pr_auc": 0.7232,
+      "tuned_pr_auc": 0.754,
+      "improvement": 0.0308,
+      "search_seconds": 20.08
+    }
+  },
+  "leakage_experiment": {
+    "with_PageValues": {
+      "accuracy": 0.8804,
+      "balanced_accuracy": 0.8012,
+      "precision": 0.6037,
+      "recall": 0.6859,
+      "f1": 0.6422,
+      "roc_auc": 0.917,
+      "pr_auc": 0.7068,
+      "mcc": 0.5724,
+      "brier": 0.0902,
+      "threshold": 0.5
+    },
+    "without_PageValues": {
+      "accuracy": 0.7751,
+      "balanced_accuracy": 0.646,
+      "precision": 0.3385,
+      "recall": 0.4581,
+      "f1": 0.3893,
+      "roc_auc": 0.7546,
+      "pr_auc": 0.3437,
+      "mcc": 0.2597,
+      "brier": 0.151,
+      "threshold": 0.5
+    },
+    "delta": {
+      "accuracy": -0.1053,
+      "balanced_accuracy": -0.1552,
+      "precision": -0.2652,
+      "recall": -0.2278,
+      "f1": -0.2529,
+      "roc_auc": -0.1624,
+      "pr_auc": -0.3631,
+      "mcc": -0.3127,
+      "brier": 0.0608,
+      "threshold": 0.0
+    }
+  },
+  "top_features": {
+    "PageValues": 0.2519899904727936,
+    "Month_Nov": 0.061080001294612885,
+    "Month_May": 0.038019999861717224,
+    "Month_Mar": 0.0347599983215332,
+    "ExitRates": 0.024210000410676003,
+    "TotalDuration": 0.017669999971985817,
+    "Browser_8": 0.016200000420212746,
+    "VisitorType_Returning_Visitor": 0.015809999778866768,
+    "Month_Jul": 0.015709999948740005,
+    "ProductPageRatio": 0.015420000068843365,
+    "OperatingSystems_8": 0.013949999585747719,
+    "ProductRelated_Duration": 0.013899999670684338,
+    "TrafficType_2": 0.013679999858140945,
+    "Month_Sep": 0.013389999978244305,
+    "TotalPages": 0.013389999978244305
+  },
+  "model_size_mb": 0.474,
+  "environment": {
+    "python": "3.13.2",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "scikit_learn": "1.9.0",
+    "numpy": "2.4.6",
+    "pandas": "2.3.3",
+    "joblib": "1.5.3"
+  },
+  "calibration": {
+    "n_bins": 10,
+    "n_test_sessions": 2441,
+    "brier_score": 0.0952,
+    "mean_gap": 0.1262,
+    "direction": "overconfident",
+    "scale_pos_weight": 5.398,
+    "interpretation": "Predicted probabilities run higher than observed conversion rates in every bin. This follows from training with scale_pos_weight=5.40 (the inverse class ratio) to protect recall on a 15.6% minority class. The model is therefore reliable for ranking and thresholding, but its probabilities should not be read as literal conversion frequencies.",
+    "curve": [
+      {
+        "bin_lower": 0.0,
+        "bin_upper": 0.1,
+        "mean_predicted": 0.0354,
+        "observed_rate": 0.0019,
+        "count": 1075
+      },
+      {
+        "bin_lower": 0.1,
+        "bin_upper": 0.2,
+        "mean_predicted": 0.1486,
+        "observed_rate": 0.0295,
+        "count": 305
+      },
+      {
+        "bin_lower": 0.2,
+        "bin_upper": 0.3,
+        "mean_predicted": 0.2453,
+        "observed_rate": 0.0628,
+        "count": 239
+      },
+      {
+        "bin_lower": 0.3,
+        "bin_upper": 0.4,
+        "mean_predicted": 0.3461,
+        "observed_rate": 0.1355,
+        "count": 155
+      },
+      {
+        "bin_lower": 0.4,
+        "bin_upper": 0.5,
+        "mean_predicted": 0.4453,
+        "observed_rate": 0.1596,
+        "count": 94
+      },
+      {
+        "bin_lower": 0.5,
+        "bin_upper": 0.6,
+        "mean_predicted": 0.5482,
+        "observed_rate": 0.2717,
+        "count": 92
+      },
+      {
+        "bin_lower": 0.6,
+        "bin_upper": 0.7,
+        "mean_predicted": 0.6542,
+        "observed_rate": 0.3176,
+        "count": 85
+      },
+      {
+        "bin_lower": 0.7,
+        "bin_upper": 0.8,
+        "mean_predicted": 0.7477,
+        "observed_rate": 0.4348,
+        "count": 69
+      },
+      {
+        "bin_lower": 0.8,
+        "bin_upper": 0.9,
+        "mean_predicted": 0.8573,
+        "observed_rate": 0.5762,
+        "count": 151
+      },
+      {
+        "bin_lower": 0.9,
+        "bin_upper": 1.0,
+        "mean_predicted": 0.9411,
+        "observed_rate": 0.858,
+        "count": 176
+      }
+    ]
+  }
+}

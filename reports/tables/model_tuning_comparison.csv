@@ -1,0 +1,4 @@
+,baseline_pr_auc,tuned_pr_auc,improvement,search_seconds
+Logistic Regression,0.6459,0.6552,0.0093,83.89
+Random Forest,0.7174,0.7515,0.0341,115.56
+XGBoost,0.7232,0.754,0.0308,20.08

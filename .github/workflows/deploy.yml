@@ -1,0 +1,210 @@
+# Continuous deployment to Hugging Face Spaces.
+#
+# ── One-time setup ──────────────────────────────────────────────────────────
+#  1. Create a Hugging Face Space:  https://huggingface.co/new-space
+#       SDK: Streamlit    Hardware: CPU basic (free)
+#  2. Create an access token with **write** scope:
+#       https://huggingface.co/settings/tokens
+#  3. In this GitHub repository go to
+#       Settings -> Secrets and variables -> Actions -> New repository secret
+#       Name:  HF_TOKEN        Value: <paste the token>
+#     The token is never written into any file in this repository, and GitHub
+#     masks it in workflow logs. Rotate it immediately if it is ever exposed.
+#  4. Edit HF_USERNAME and HF_SPACE_NAME below to match your Space.
+# ────────────────────────────────────────────────────────────────────────────
+
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allows a manual re-deploy from the Actions tab
+
+env:
+  # ---- Target Hugging Face Space ----
+  HF_USERNAME: Aishawarya
+  HF_SPACE_NAME: SDAIM_Final
+  # -----------------------------------
+  # 3.12 is a hard floor, not a preference: xgboost 3.3.0, scipy 1.18.0 and
+  # shap 0.52.0 all declare requires_python >=3.12, so pip cannot resolve this
+  # requirements.txt on 3.11. Must stay in step with python_version in README.md,
+  # which is what the Hugging Face Space itself builds against.
+  PYTHON_VERSION: "3.12"
+
+concurrency:
+  # A newer push supersedes an in-flight deploy rather than racing it.
+  group: hf-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------- verify --
+  # Runs before any deployment. A model artifact that cannot be loaded, or an
+  # app that cannot score a session, fails the build here rather than taking
+  # down the live Space.
+  verify:
+    name: Verify model and application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Confirm required deployment files exist
+        run: |
+          for file in app.py requirements.txt README.md models/model.joblib \
+                      models/metadata.json models/app_schema.json; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Required deployment file is missing: $file"
+              exit 1
+            fi
+            echo "  found $file"
+          done
+
+      - name: Confirm the Space Python version matches this workflow
+        # CI installing cleanly on 3.12 proves nothing if the Space builds on
+        # 3.11 - the failure would surface only after deployment, in the Space's
+        # build log. Catch the drift here instead.
+        run: |
+          readme_version=$(sed -n 's/^python_version:[[:space:]]*"\{0,1\}\([0-9.]*\)"\{0,1\}[[:space:]]*$/\1/p' README.md | head -1)
+          if [ -z "$readme_version" ]; then
+            echo "::error::No python_version found in the README front-matter."
+            exit 1
+          fi
+          if [ "$readme_version" != "${{ env.PYTHON_VERSION }}" ]; then
+            echo "::error::README python_version ($readme_version) does not match \
+          workflow PYTHON_VERSION (${{ env.PYTHON_VERSION }}). The Space would build \
+          against a different interpreter than CI tested."
+            exit 1
+          fi
+          echo "  Space and CI both build on Python $readme_version"
+
+      - name: Smoke-test the serialised model
+        # Catches the single most likely deployment failure: a joblib artifact
+        # pickled under a different scikit-learn version to the one pinned in
+        # requirements.txt, which would otherwise fail on the live Space.
+        run: |
+          python -c "
+          from src.inference import model_health
+          health = model_health()
+          print(health)
+          raise SystemExit(0 if health['ok'] else 1)
+          "
+
+      - name: Run the test suite
+        run: python -m pytest tests/ -v --tb=short
+
+  # ---------------------------------------------------------------- deploy --
+  deploy:
+    name: Sync to Hugging Face Space
+    runs-on: ubuntu-latest
+    needs: verify # deployment is blocked unless every check above passed
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install the Hugging Face client
+        run: pip install "huggingface_hub>=0.28,<2.0"
+
+      - name: Upload application files to the Space
+        env:
+          # Injected from the repository secret. Never hardcoded, never echoed.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          from huggingface_hub import HfApi
+
+          token = os.environ.get("HF_TOKEN")
+          if not token:
+              sys.exit(
+                  "::error::HF_TOKEN secret is not set. Add it under "
+                  "Settings -> Secrets and variables -> Actions."
+              )
+
+          repo_id = f"{os.environ['HF_USERNAME']}/{os.environ['HF_SPACE_NAME']}"
+          api = HfApi(token=token)
+
+          # Only the files the Space needs to run. The dataset, notebooks,
+          # reports and CI configuration stay in GitHub and are never uploaded.
+          allow = [
+              "app.py",
+              "requirements.txt",
+              "README.md",
+              "src/*.py",
+              "models/model.joblib",
+              "models/metadata.json",
+              "models/app_schema.json",
+              ".streamlit/config.toml",
+          ]
+
+          # Files that must NOT survive on the Space. "src/*" and "models/*"
+          # clear artifacts from previous deploys, so a renamed or deleted module
+          # does not linger and get imported. The Docker entries remove the
+          # scaffolding of the Streamlit-on-Docker template this Space was
+          # created from: leaving a Dockerfile next to `sdk: streamlit` gives the
+          # Space two conflicting sets of build instructions.
+          delete = [
+              "src/*",
+              "models/*",
+              "Dockerfile",
+              ".dockerignore",
+          ]
+
+          commit = api.upload_folder(
+              folder_path=".",
+              repo_id=repo_id,
+              repo_type="space",
+              allow_patterns=allow,
+              delete_patterns=delete,
+              commit_message=f"Deploy {os.environ['GITHUB_SHA'][:7]} from GitHub Actions",
+          )
+          print(f"Deployed to https://huggingface.co/spaces/{repo_id}")
+          print(f"Commit: {commit.commit_url}")
+          PY
+
+      - name: Summarise the deployment
+        run: |
+          {
+            echo "### Deployed to Hugging Face 🚀"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Space | https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME} |"
+            echo "| Commit | \`${GITHUB_SHA::7}\` |"
+            echo "| Triggered by | @${GITHUB_ACTOR} |"
+            echo ""
+            echo "The Space rebuilds automatically. Allow 1-2 minutes, and note "
+            echo "that a free-tier Space sleeping after inactivity adds a "
+            echo "30-60 second cold start on the first request."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# ── If the workflow goes red, check in this order ───────────────────────────
+#  1. "HF_TOKEN secret is not set"      -> add the secret (setup step 3 above)
+#  2. 401/403 from Hugging Face         -> token lacks **write** scope, or was
+#                                          revoked; generate a new one
+#  3. 404 Repository Not Found          -> HF_USERNAME / HF_SPACE_NAME above do
+#                                          not match an existing Space
+#  4. Smoke test fails                  -> model.joblib was trained under a
+#                                          different scikit-learn version than
+#                                          requirements.txt pins; retrain or
+#                                          realign the pin
+#  5. Space builds but shows an error   -> open the Space's own build logs; the
+#                                          usual cause is a package present
+#                                          locally but absent from requirements
+# ────────────────────────────────────────────────────────────────────────────

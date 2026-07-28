@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / tooling
+.vscode/
+.idea/
+*.swp
+.claude/
+
+# Secrets - never commit a Hugging Face token
+.env
+.env.*
+*.token
+secrets.*
+
+# Streamlit runtime
+.streamlit/secrets.toml
+
+# Note: data/raw/ and models/ ARE committed deliberately.
+# The raw CSV (1.0 MB) keeps the analysis reproducible from a clean clone, and
+# model.joblib (0.5 MB) is what the Hugging Face Space serves. Both are well
+# inside git's comfortable size range, so neither needs Git LFS.

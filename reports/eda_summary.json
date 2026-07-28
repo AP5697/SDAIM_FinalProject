@@ -1,0 +1,426 @@
+{
+  "dataset": "Online Shoppers Purchasing Intention Dataset",
+  "source_url": "https://archive.ics.uci.edu/dataset/468/online+shoppers+purchasing+intention+dataset",
+  "licence": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+  "raw_shape": [
+    12330,
+    18
+  ],
+  "total_nulls": 0,
+  "n_duplicates": 125,
+  "duplicate_pct": 1.014,
+  "integer_coded_categoricals": {
+    "OperatingSystems": {
+      "inferred_dtype": "int64",
+      "n_unique": 8,
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    "Browser": {
+      "inferred_dtype": "int64",
+      "n_unique": 13,
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ]
+    },
+    "Region": {
+      "inferred_dtype": "int64",
+      "n_unique": 9,
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    "TrafficType": {
+      "inferred_dtype": "int64",
+      "n_unique": 20,
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ]
+    }
+  },
+  "zero_inflation_pct": {
+    "Administrative": 46.78,
+    "Administrative_Duration": 47.88,
+    "Informational": 78.66,
+    "Informational_Duration": 80.49,
+    "ProductRelated": 0.31,
+    "ProductRelated_Duration": 6.12,
+    "BounceRates": 44.75,
+    "ExitRates": 0.62,
+    "PageValues": 77.86,
+    "SpecialDay": 89.85
+  },
+  "target_positive_rate": 15.474,
+  "target_counts": {
+    "no_purchase": 10422,
+    "purchase": 1908
+  },
+  "imbalance_ratio": 5.46,
+  "majority_class_accuracy": 84.526,
+  "shape_after_dedup": [
+    12205,
+    18
+  ],
+  "duplicates_removed": 125,
+  "outliers": {
+    "PageValues": {
+      "q1": 0.0,
+      "q3": 0.0,
+      "lower_bound": 0.0,
+      "upper_bound": 0.0,
+      "n_outliers": 2730,
+      "pct_outliers": 22.37,
+      "max": 361.7637,
+      "skew": 6.351
+    },
+    "Informational": {
+      "q1": 0.0,
+      "q3": 0.0,
+      "lower_bound": 0.0,
+      "upper_bound": 0.0,
+      "n_outliers": 2631,
+      "pct_outliers": 21.56,
+      "max": 24.0,
+      "skew": 4.014
+    },
+    "Informational_Duration": {
+      "q1": 0.0,
+      "q3": 0.0,
+      "lower_bound": 0.0,
+      "upper_bound": 0.0,
+      "n_outliers": 2405,
+      "pct_outliers": 19.71,
+      "max": 2549.375,
+      "skew": 7.54
+    },
+    "BounceRates": {
+      "q1": 0.0,
+      "q3": 0.0167,
+      "lower_bound": -0.025,
+      "upper_bound": 0.0417,
+      "n_outliers": 1428,
+      "pct_outliers": 11.7,
+      "max": 0.2,
+      "skew": 3.162
+    },
+    "ExitRates": {
+      "q1": 0.0142,
+      "q3": 0.0485,
+      "lower_bound": -0.0372,
+      "upper_bound": 0.1,
+      "n_outliers": 1325,
+      "pct_outliers": 10.86,
+      "max": 0.2,
+      "skew": 2.235
+    },
+    "SpecialDay": {
+      "q1": 0.0,
+      "q3": 0.0,
+      "lower_bound": 0.0,
+      "upper_bound": 0.0,
+      "n_outliers": 1249,
+      "pct_outliers": 10.23,
+      "max": 1.0,
+      "skew": 3.286
+    },
+    "Administrative_Duration": {
+      "q1": 0.0,
+      "q3": 94.7,
+      "lower_bound": -142.05,
+      "upper_bound": 236.75,
+      "n_outliers": 1149,
+      "pct_outliers": 9.41,
+      "max": 3398.75,
+      "skew": 5.592
+    },
+    "ProductRelated": {
+      "q1": 8.0,
+      "q3": 38.0,
+      "lower_bound": -37.0,
+      "upper_bound": 83.0,
+      "n_outliers": 1007,
+      "pct_outliers": 8.25,
+      "max": 705.0,
+      "skew": 4.333
+    },
+    "TotalPages": {
+      "q1": 9.0,
+      "q3": 42.0,
+      "lower_bound": -40.5,
+      "upper_bound": 91.5,
+      "n_outliers": 971,
+      "pct_outliers": 7.96,
+      "max": 746.0,
+      "skew": 4.185
+    },
+    "ProductRelated_Duration": {
+      "q1": 193.0,
+      "q3": 1477.1548,
+      "lower_bound": -1733.2321,
+      "upper_bound": 3403.3869,
+      "n_outliers": 951,
+      "pct_outliers": 7.79,
+      "max": 63973.5222,
+      "skew": 7.253
+    },
+    "TotalDuration": {
+      "q1": 231.6667,
+      "q3": 1643.9583,
+      "lower_bound": -1886.7708,
+      "upper_bound": 3762.3958,
+      "n_outliers": 922,
+      "pct_outliers": 7.55,
+      "max": 69921.6472,
+      "skew": 7.528
+    },
+    "AvgDurationPerPage": {
+      "q1": 18.5556,
+      "q3": 45.6883,
+      "lower_bound": -22.1435,
+      "upper_bound": 86.3874,
+      "n_outliers": 751,
+      "pct_outliers": 6.15,
+      "max": 1410.9993,
+      "skew": 10.853
+    },
+    "BounceExitDelta": {
+      "q1": 0.0083,
+      "q3": 0.0275,
+      "lower_bound": -0.0204,
+      "upper_bound": 0.0563,
+      "n_outliers": 732,
+      "pct_outliers": 6.0,
+      "max": 0.2,
+      "skew": 2.171
+    },
+    "ProductPageRatio": {
+      "q1": 0.8571,
+      "q3": 1.0,
+      "lower_bound": 0.6429,
+      "upper_bound": 1.2143,
+      "n_outliers": 710,
+      "pct_outliers": 5.82,
+      "max": 1.0,
+      "skew": -2.406
+    },
+    "Administrative": {
+      "q1": 0.0,
+      "q3": 4.0,
+      "lower_bound": -6.0,
+      "upper_bound": 10.0,
+      "n_outliers": 404,
+      "pct_outliers": 3.31,
+      "max": 27.0,
+      "skew": 1.947
+    }
+  },
+  "high_correlation_pairs": [
+    {
+      "feature_a": "ProductRelated",
+      "feature_b": "TotalPages",
+      "abs_corr": 0.9972
+    },
+    {
+      "feature_a": "ProductRelated_Duration",
+      "feature_b": "TotalDuration",
+      "abs_corr": 0.9939
+    },
+    {
+      "feature_a": "BounceRates",
+      "feature_b": "ExitRates",
+      "abs_corr": 0.9021
+    },
+    {
+      "feature_a": "ProductRelated",
+      "feature_b": "ProductRelated_Duration",
+      "abs_corr": 0.8603
+    },
+    {
+      "feature_a": "ProductRelated_Duration",
+      "feature_b": "TotalPages",
+      "abs_corr": 0.8599
+    },
+    {
+      "feature_a": "TotalPages",
+      "feature_b": "TotalDuration",
+      "abs_corr": 0.8568
+    },
+    {
+      "feature_a": "ProductRelated",
+      "feature_b": "TotalDuration",
+      "abs_corr": 0.8522
+    }
+  ],
+  "target_correlation": {
+    "PageValues": 0.4919,
+    "TotalPages": 0.1615,
+    "ProductRelated": 0.156,
+    "TotalDuration": 0.1537,
+    "ProductRelated_Duration": 0.1501,
+    "Administrative": 0.1363,
+    "Informational": 0.0936,
+    "Administrative_Duration": 0.0918,
+    "Informational_Duration": 0.0694,
+    "AvgDurationPerPage": 0.0381,
+    "ProductPageRatio": -0.0442,
+    "SpecialDay": -0.0836,
+    "BounceExitDelta": -0.1416,
+    "BounceRates": -0.1451,
+    "ExitRates": -0.2043
+  },
+  "categorical_conversion": {
+    "Month": {
+      "Aug": {
+        "conversion_pct": 17.55,
+        "sessions": 433
+      },
+      "Dec": {
+        "conversion_pct": 12.66,
+        "sessions": 1706
+      },
+      "Feb": {
+        "conversion_pct": 1.66,
+        "sessions": 181
+      },
+      "Jul": {
+        "conversion_pct": 15.28,
+        "sessions": 432
+      },
+      "June": {
+        "conversion_pct": 10.18,
+        "sessions": 285
+      },
+      "Mar": {
+        "conversion_pct": 10.32,
+        "sessions": 1860
+      },
+      "May": {
+        "conversion_pct": 10.96,
+        "sessions": 3329
+      },
+      "Nov": {
+        "conversion_pct": 25.49,
+        "sessions": 2982
+      },
+      "Oct": {
+        "conversion_pct": 20.95,
+        "sessions": 549
+      },
+      "Sep": {
+        "conversion_pct": 19.2,
+        "sessions": 448
+      }
+    },
+    "VisitorType": {
+      "New_Visitor": {
+        "conversion_pct": 24.93,
+        "sessions": 1693
+      },
+      "Other": {
+        "conversion_pct": 19.75,
+        "sessions": 81
+      },
+      "Returning_Visitor": {
+        "conversion_pct": 14.09,
+        "sessions": 10431
+      }
+    },
+    "Weekend": {
+      "false": {
+        "conversion_pct": 15.08,
+        "sessions": 9346
+      },
+      "true": {
+        "conversion_pct": 17.45,
+        "sessions": 2859
+      }
+    }
+  },
+  "months_present": [
+    "Feb",
+    "Mar",
+    "May",
+    "June",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec"
+  ],
+  "months_missing": [
+    "Jan",
+    "Apr"
+  ],
+  "mutual_information": {
+    "PageValues": 0.16379,
+    "ExitRates": 0.04171,
+    "TotalDuration": 0.03462,
+    "ProductRelated_Duration": 0.03142,
+    "ProductRelated": 0.0267,
+    "ProductPageRatio": 0.02562,
+    "BounceExitDelta": 0.02554,
+    "TotalPages": 0.02162,
+    "AvgDurationPerPage": 0.02111,
+    "BounceRates": 0.01876,
+    "TrafficType": 0.01539,
+    "Month": 0.01524,
+    "Administrative_Duration": 0.01424,
+    "Administrative": 0.01332,
+    "Informational_Duration": 0.00575,
+    "SpecialDay": 0.00544,
+    "VisitorType": 0.00481,
+    "Informational": 0.00471,
+    "OperatingSystems": 0.00325,
+    "Browser": 0.00126,
+    "Region": 0.0004,
+    "Weekend": 0.00038
+  }
+}

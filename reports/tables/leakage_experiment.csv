@@ -1,0 +1,4 @@
+,accuracy,balanced_accuracy,precision,recall,f1,roc_auc,pr_auc,mcc,brier,threshold
+with_PageValues,0.8804,0.8012,0.6037,0.6859,0.6422,0.917,0.7068,0.5724,0.0902,0.5
+without_PageValues,0.7751,0.646,0.3385,0.4581,0.3893,0.7546,0.3437,0.2597,0.151,0.5
+delta,-0.1053,-0.1552,-0.2652,-0.2278,-0.2529,-0.1624,-0.3631,-0.3127,0.0608,0.0

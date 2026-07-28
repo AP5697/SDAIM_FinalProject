@@ -1,0 +1,12 @@
+# Normalise line endings. Development happens on Windows, but GitHub Actions
+# and the Hugging Face Space both build on Linux, so text files are stored with
+# LF in the repository and checked out natively on each platform.
+* text=auto eol=lf
+
+# Binary artifacts must never be line-ending converted - doing so corrupts them.
+*.joblib binary
+*.png    binary
+*.jpg    binary
+*.pdf    binary
+*.docx   binary
+*.xlsx   binary

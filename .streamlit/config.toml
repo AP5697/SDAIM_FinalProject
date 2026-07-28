@@ -1,0 +1,20 @@
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+font = "sans serif"
+
+[server]
+maxUploadSize = 20
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Hides Streamlit's own "Deploy" button and template-app menu items - both
+# point at Streamlit Community Cloud, not our Hugging Face + GitHub Actions
+# pipeline, and only confuse anyone testing the app.
+toolbarMode = "minimal"

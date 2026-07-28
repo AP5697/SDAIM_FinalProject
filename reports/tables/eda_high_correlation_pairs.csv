@@ -1,0 +1,8 @@
+feature_a,feature_b,abs_corr
+ProductRelated,TotalPages,0.9971693203033168
+ProductRelated_Duration,TotalDuration,0.9938867012144174
+BounceRates,ExitRates,0.9021443956243445
+ProductRelated,ProductRelated_Duration,0.8603298646587764
+ProductRelated_Duration,TotalPages,0.8598771620980702
+TotalPages,TotalDuration,0.8567601912991382
+ProductRelated,TotalDuration,0.8522430985108571

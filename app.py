@@ -879,6 +879,15 @@ Model artifact: `{config.MODEL_FILE.name}` ({metadata.get('model_size_mb', 0)} M
 a single serialised pipeline containing preprocessing and the classifier together.
 Trained with scikit-learn {metadata.get('environment', {}).get('scikit_learn', '-')}
 on Python {metadata.get('environment', {}).get('python', '-')}.
+
+Every push to `main` runs the test suite in GitHub Actions and, only if it
+passes, syncs this application to the Space automatically. The Hugging Face
+token lives in a GitHub Actions secret and appears in no file in the repository.
+
+##### Links
+- **Source code:** {config.GITHUB_REPO_URL}
+- **Live Space:** {config.HF_SPACE_URL}
+- **Dataset:** {config.DATASET_HOME}
 """
     )
 

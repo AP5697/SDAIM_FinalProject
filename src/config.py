@@ -65,6 +65,18 @@ DATASET_CITATION: Final[str] = (
 DATASET_LICENCE: Final[str] = "Creative Commons Attribution 4.0 International (CC BY 4.0)"
 
 # --------------------------------------------------------------------------- #
+# Deployment targets
+#
+# Kept here rather than inline in the application so the repository and Space
+# are named in exactly one place. The GitHub Actions workflow holds the same
+# Space coordinates as env vars; they must be changed together if the Space
+# is ever renamed.
+# --------------------------------------------------------------------------- #
+
+GITHUB_REPO_URL: Final[str] = "https://github.com/AP5697/SDAIM_FinalProject"
+HF_SPACE_URL: Final[str] = "https://huggingface.co/spaces/Aishawarya/SDAIM_Final"
+
+# --------------------------------------------------------------------------- #
 # Target
 # --------------------------------------------------------------------------- #
 

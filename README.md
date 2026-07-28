@@ -9,7 +9,7 @@ python_version: "3.12"
 app_file: app.py
 pinned: false
 license: mit
-short_description: Predict whether an e-commerce browsing session will end in a purchase
+short_description: Predict purchase intent from a live browsing session
 ---
 
 # 🛒 Purchase Intent Scorer

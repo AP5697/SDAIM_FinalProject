@@ -89,6 +89,45 @@ jobs:
           fi
           echo "  Space and CI both build on Python $readme_version"
 
+      - name: Validate the Hugging Face Space metadata
+        # The Space rejects invalid front-matter at upload time, which is after
+        # verify has already passed - so the run goes red on a one-line README
+        # problem having spent minutes installing and testing. Check the
+        # constraints here instead.
+        run: |
+          python - <<'PY'
+          import re, sys
+
+          text = open("README.md", encoding="utf-8").read()
+          match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+          if not match:
+              sys.exit("::error::README.md has no YAML front-matter; the Space needs it to build.")
+
+          front = match.group(1)
+          problems = []
+
+          # Documented Hugging Face limit; exceeding it fails the upload.
+          desc = re.search(r"^short_description:\s*(.+?)\s*$", front, re.M)
+          if desc and len(desc.group(1)) > 60:
+              problems.append(
+                  f"short_description is {len(desc.group(1))} characters; the limit is 60."
+              )
+
+          for field in ("title", "sdk", "app_file"):
+              if not re.search(rf"^{field}:\s*\S", front, re.M):
+                  problems.append(f"required front-matter field '{field}' is missing.")
+
+          sdk = re.search(r"^sdk:\s*(\S+)", front, re.M)
+          if sdk and sdk.group(1) != "streamlit":
+              problems.append(f"sdk is '{sdk.group(1)}'; this app is a Streamlit Space.")
+
+          if problems:
+              for problem in problems:
+                  print(f"::error::Space metadata: {problem}")
+              sys.exit(1)
+          print("Space front-matter is valid.")
+          PY
+
       - name: Smoke-test the serialised model
         # Catches the single most likely deployment failure: a joblib artifact
         # pickled under a different scikit-learn version to the one pinned in

@@ -140,6 +140,48 @@ jobs:
           repo_id = f"{os.environ['HF_USERNAME']}/{os.environ['HF_SPACE_NAME']}"
           api = HfApi(token=token)
 
+          # Diagnose the token before attempting the upload. A failed
+          # upload_folder reports only the HTTP status, which is the same 403
+          # for "read-only token", "fine-grained token missing this repo" and
+          # "wrong account" - three problems with three different fixes. None of
+          # the checks below print the token itself.
+          try:
+              identity = api.whoami()
+          except Exception as exc:
+              sys.exit(
+                  f"::error::HF_TOKEN was rejected by Hugging Face ({exc}). "
+                  "Create a new token at https://huggingface.co/settings/tokens "
+                  "and update the GitHub secret."
+              )
+
+          name = identity.get("name", "<unknown>")
+          auth = (identity.get("auth") or {}).get("accessToken") or {}
+          role = auth.get("role", "<unknown>")
+          print(f"Authenticated as '{name}' with token role '{role}'.")
+
+          if role == "read":
+              sys.exit(
+                  "::error::HF_TOKEN is a READ token, which cannot deploy. "
+                  "Create a token with the 'write' role at "
+                  "https://huggingface.co/settings/tokens and replace the "
+                  "HF_TOKEN secret."
+              )
+
+          owner = os.environ["HF_USERNAME"]
+          if name != owner:
+              print(
+                  f"::warning::Token belongs to '{name}' but the target Space is "
+                  f"owned by '{owner}'. This only works if '{name}' has write "
+                  f"access to it."
+              )
+
+          if not api.repo_exists(repo_id=repo_id, repo_type="space"):
+              sys.exit(
+                  f"::error::Space '{repo_id}' does not exist or this token "
+                  f"cannot see it. Check HF_USERNAME and HF_SPACE_NAME in this "
+                  f"workflow against https://huggingface.co/{repo_id}"
+              )
+
           # Only the files the Space needs to run. The dataset, notebooks,
           # reports and CI configuration stay in GitHub and are never uploaded.
           allow = [

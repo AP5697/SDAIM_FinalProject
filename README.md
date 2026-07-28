@@ -18,14 +18,14 @@ Predicts whether a live e-commerce browsing session will end in a purchase, so a
 retailer can fire a real-time incentive at the sessions that are *winnable but not
 yet won* — instead of discounting everyone or no one.
 
-[![Deploy](https://img.shields.io/badge/deploy-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](../../actions)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Deploy](https://github.com/AP5697/SDAIM_FinalProject/actions/workflows/deploy.yml/badge.svg)](https://github.com/AP5697/SDAIM_FinalProject/actions/workflows/deploy.yml)
+[![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.9.0-F7931E?logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
 [![Streamlit](https://img.shields.io/badge/streamlit-1.59.1-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Live demo:** _add your Hugging Face Space URL here_
-> **Repository:** _add your GitHub repository URL here_
+> **Live demo:** <https://huggingface.co/spaces/Aishawarya/SDAIM_Final>
+> **Repository:** <https://github.com/AP5697/SDAIM_FinalProject>
 
 ---
 
@@ -76,13 +76,20 @@ Forest at inference — a decision that matters for a real-time scoring UI.
 
 - **Session scorer** — score one session from its Google Analytics metrics, with
   four presets built from the medians of real behavioural segments in the data
+- **Per-prediction SHAP attribution** — why *this* session scored what it did,
+  not just which features matter globally
+- **What-if analysis** — sweep any one field across its observed range, holding
+  everything else fixed, to see how the prediction responds
+- **Switchable decision policy** — compare the max-F1 threshold (0.70) against
+  the max-campaign-value threshold (0.75) live
 - **Batch scoring** — upload an analytics export and rank every session
-- **Model insights** — live metrics, feature importance, and the leakage experiment
+- **Model insights** — live metrics, feature importance, the calibration curve
+  and the leakage experiment
 - **Input validation** — rejects negative counts, out-of-range rates, and
   physically impossible sessions (time spent on pages never visited)
 - **Prediction history** with CSV download
-- **Graceful degradation** — unseen category levels encode to all-zeros rather
-  than crashing the deployed app
+- **Graceful degradation** — unseen category levels encode to all-zeros, and
+  SHAP falling over degrades to global importances rather than breaking the app
 
 ## Quick start
 
@@ -124,11 +131,14 @@ Final_project/
 │   └── utils.py                # Logging, timing, artifact persistence
 ├── scripts/
 │   ├── run_eda.py              # Full EDA run
-│   └── build_app_assets.py     # Derives UI schema from the training data
-├── tests/test_pipeline.py      # 20 tests against the real artifact
+│   ├── build_app_assets.py     # Derives UI schema from the training data
+│   └── add_calibration.py      # Measures the calibration curve on the test split
+├── tests/test_pipeline.py      # 30 tests against the real artifact
 ├── data/raw/                   # Source CSV (committed for reproducibility)
-├── reports/figures/            # 14 generated figures
-├── reports/tables/             # Generated result tables
+├── reports/figures/            # 16 generated figures
+├── reports/tables/             # 15 generated result tables
+├── docs/                       # Plain-English workflow one-pager
+├── .streamlit/config.toml      # Theme and upload limits
 └── .github/workflows/deploy.yml
 ```
 
@@ -163,6 +173,15 @@ collapse. The feature is retained (it is legitimately available at session start
 computed from historical traffic) but the dependence is documented rather than
 hidden.
 
+**The probabilities are deliberately not calibrated.** Every bin of the
+reliability curve sits above the diagonal: the model predicts higher
+probabilities than the observed conversion rate justifies, by a count-weighted
+mean of +0.126 (Brier 0.0952). This is a consequence of training with
+`scale_pos_weight = 5.4` — the inverse class ratio — to protect recall on a
+15.6% minority. The scores are therefore sound for *ranking* and *thresholding*,
+which is all the application uses them for, but should not be read as literal
+conversion frequencies. See **Model insights → Calibration** in the app.
+
 ## Deployment
 
 Pushing to `main` triggers `.github/workflows/deploy.yml`, which runs the test
@@ -170,10 +189,16 @@ suite and then syncs the application files to the Hugging Face Space using an
 `HF_TOKEN` stored as a GitHub Actions secret. The Space rebuilds automatically.
 See the workflow file for setup instructions.
 
+Note that `python_version` in this file's front-matter and `PYTHON_VERSION` in
+the workflow must stay in step — `xgboost`, `scipy` and `shap` all require
+Python ≥ 3.12, and a mismatch would fail the Space build after CI had already
+passed. The workflow asserts this rather than trusting it.
+
 ## Future work
 
-- Calibrate probabilities (isotonic or Platt) — the Brier score of 0.0952 suggests headroom
-- Replace global feature importance in the app with per-prediction SHAP attributions
+- Wrap the classifier in `CalibratedClassifierCV` if calibrated probabilities are
+  ever needed; the trade-off is giving back some of the recall the class
+  weighting was introduced to buy
 - Monitor for drift: the source data is missing January and April entirely, so
   seasonal coverage is incomplete
 - A/B test the intervention itself; the 10% uplift assumption in the threshold

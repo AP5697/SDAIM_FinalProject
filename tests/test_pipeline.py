@@ -378,6 +378,51 @@ def test_positional_matching_can_be_disabled(real_rows) -> None:
         inference.align_columns(anonymous, allow_positional=False)
 
 
+def test_unrelated_dataset_is_rejected_by_default(model) -> None:
+    """A different dataset entirely must not be scored without opting in.
+
+    Modelled on a real incident: a telecom churn export was uploaded to this
+    scorer. It has 21 columns, so positional matching accepted it and read
+    ``customerID`` as ``Administrative``. Refusing by default is what keeps
+    that from becoming a page of confident, meaningless probabilities.
+    """
+    churn_like = pd.DataFrame(
+        {
+            "customerID": ["7590-VHVEG", "5575-GNVDE"],
+            "gender": ["Female", "Male"],
+            "SeniorCitizen": [0, 0],
+            "Partner": ["Yes", "No"],
+            "Dependents": ["No", "No"],
+            "tenure": [1, 34],
+            "PhoneService": ["No", "Yes"],
+            "MultipleLines": ["No phone service", "No"],
+            "InternetService": ["DSL", "DSL"],
+            "OnlineSecurity": ["No", "Yes"],
+            "OnlineBackup": ["Yes", "No"],
+            "DeviceProtection": ["No", "Yes"],
+            "TechSupport": ["No", "No"],
+            "StreamingTV": ["No", "No"],
+            "StreamingMovies": ["No", "No"],
+            "Contract": ["Month-to-month", "One year"],
+            "PaperlessBilling": ["Yes", "No"],
+            "PaymentMethod": ["Electronic check", "Mailed check"],
+            "MonthlyCharges": [29.85, 56.95],
+            "TotalCharges": [29.85, 1889.5],
+            "Churn": ["No", "No"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Could not find"):
+        inference.align_columns(churn_like, allow_positional=False, model=model)
+
+    # Opting in still works, and still declares itself unreliable.
+    alignment = inference.align_columns(
+        churn_like, allow_positional=True, model=model
+    )
+    assert alignment.strategy == "positional"
+    assert alignment.trustworthy is False
+
+
 def test_unrelated_table_is_scored_but_marked_untrustworthy(model) -> None:
     """An unrelated table with enough columns scores, and says so.
 

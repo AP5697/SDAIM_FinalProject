@@ -649,9 +649,10 @@ def page_batch(
     )
     st.code(", ".join(required), language="text")
     st.caption(
-        "Column names are matched exactly where possible, then ignoring case and "
-        "punctuation. If the names cannot be matched at all, columns are read in "
-        "the order above instead - the mapping used is always shown before results."
+        "Names are matched exactly where possible, then ignoring case and "
+        "punctuation - so `Page Values`, `page_values` and `PageValues` all work. "
+        "This page scores many sessions of the same kind the model was trained on; "
+        "it is not a general-purpose scorer for other datasets."
     )
 
     template = pd.DataFrame([schema["presets"]["High-intent buyer"]])[required]
@@ -675,10 +676,39 @@ def page_batch(
 
     st.caption(f"Loaded {len(frame):,} rows x {frame.shape[1]} columns.")
 
+    # Positional mapping is opt-in. Left on by default it will happily score a
+    # table of unrelated data - customer churn, anything with enough columns -
+    # because the model has no way to recognise that the file is not browsing
+    # sessions. Refusing by default makes the mismatch a visible error rather
+    # than a page of confident, meaningless probabilities.
+    force_positional = st.checkbox(
+        "Map columns by position if the names do not match",
+        value=False,
+        help=(
+            "Only for files that hold the right fields under different names. "
+            "Any table with 17+ columns will be scored, whether or not it "
+            "describes browsing sessions."
+        ),
+    )
+
     try:
-        alignment = inference.align_columns(frame)
+        alignment = inference.align_columns(
+            frame, allow_positional=force_positional, model=model
+        )
     except ValueError as exc:
-        st.error(f"This file cannot be scored: {exc}")
+        st.error(f"**This file cannot be scored.** {exc}")
+        recognised = [c for c in required if c in frame.columns]
+        st.markdown(
+            f"Recognised **{len(recognised)} of {len(required)}** required fields. "
+            "The model reads Google Analytics browsing sessions, so the file needs "
+            "those fields - a different dataset cannot be scored by renaming its "
+            "columns, because the underlying measurements are not the same thing."
+        )
+        st.markdown(
+            "Use **Download a template CSV** above to see the expected format. "
+            "If your file holds the right fields under different names, tick "
+            "*Map columns by position* and check the mapping it shows."
+        )
         return
 
     if alignment.strategy == "positional":

@@ -232,6 +232,170 @@ def test_batch_matches_single_prediction(schema, model, metadata) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Uploaded-file column alignment
+#
+# The batch uploader accepts arbitrary files, so these assert the alignment
+# never silently changes a prediction. Every strategy must reproduce the
+# probabilities obtained from the raw data at its native dtypes.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(scope="module")
+def real_rows():
+    """Return real dataset rows at their native dtypes."""
+    from src.data_loader import load_raw_data
+
+    return load_raw_data().head(120)[config.ALL_FEATURES]
+
+
+@pytest.fixture(scope="module")
+def reference_probabilities(model, real_rows):
+    """Probabilities for those rows, scored without any alignment."""
+    return model.predict_proba(real_rows)[:, 1]
+
+
+def _aligned_probabilities(model, frame) -> "list[float]":
+    """Align a frame then score it."""
+    return model.predict_proba(inference.align_columns(frame).frame)[:, 1]
+
+
+def test_exact_names_align_without_changing_predictions(
+    model, real_rows, reference_probabilities
+) -> None:
+    """A correctly named file scores identically to the raw data."""
+    alignment = inference.align_columns(real_rows)
+    assert alignment.strategy == "exact"
+    assert alignment.trustworthy
+    probabilities = model.predict_proba(alignment.frame)[:, 1]
+    assert probabilities == pytest.approx(reference_probabilities, abs=1e-12)
+
+
+def test_renamed_columns_are_matched_and_score_identically(
+    model, real_rows, reference_probabilities
+) -> None:
+    """Case and punctuation differences do not change any prediction."""
+    messy = real_rows.copy()
+    messy.columns = [
+        name.upper() if index % 2 else name.lower().replace("_", " ")
+        for index, name in enumerate(real_rows.columns)
+    ]
+    alignment = inference.align_columns(messy)
+    assert alignment.strategy == "normalised"
+    assert alignment.trustworthy
+    probabilities = model.predict_proba(alignment.frame)[:, 1]
+    assert probabilities == pytest.approx(reference_probabilities, abs=1e-12)
+
+
+def test_unnamed_columns_fall_back_to_position(
+    model, real_rows, reference_probabilities
+) -> None:
+    """Unmatched names are read positionally, and flagged as untrustworthy."""
+    anonymous = real_rows.copy()
+    anonymous.columns = [f"col_{i}" for i in range(real_rows.shape[1])]
+    alignment = inference.align_columns(anonymous)
+
+    assert alignment.strategy == "positional"
+    # The caller must be able to tell the mapping was assumed, not derived.
+    assert alignment.trustworthy is False
+    probabilities = model.predict_proba(alignment.frame)[:, 1]
+    assert probabilities == pytest.approx(reference_probabilities, abs=1e-12)
+
+
+def test_string_typed_upload_is_coerced_not_crashed(
+    model, real_rows, reference_probabilities
+) -> None:
+    """A CSV parsed entirely as text still scores correctly.
+
+    Without coercion this raises TypeError inside the scaler, so this is a
+    regression guard rather than a nicety.
+    """
+    as_text = real_rows.copy().astype(str)
+    probabilities = _aligned_probabilities(model, as_text)
+    assert probabilities == pytest.approx(reference_probabilities, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "label, mutate",
+    [
+        ("identifier codes as text", lambda f: f.assign(
+            **{n: f[n].astype(str) for n in config.INTEGER_CODED_CATEGORICAL_FEATURES}
+        )),
+        ("weekend as text", lambda f: f.assign(Weekend=f["Weekend"].astype(str))),
+        ("weekend as yes/no", lambda f: f.assign(
+            Weekend=f["Weekend"].map({True: "Yes", False: "No"})
+        )),
+        ("month lowercased", lambda f: f.assign(Month=f["Month"].str.lower())),
+        ("visitor type lowercased", lambda f: f.assign(
+            VisitorType=f["VisitorType"].str.lower()
+        )),
+    ],
+)
+def test_encoding_variations_are_repaired_not_silently_mispredicted(
+    model, real_rows, reference_probabilities, label, mutate
+) -> None:
+    """Common CSV encoding quirks must not quietly change the prediction.
+
+    OneHotEncoder(handle_unknown="ignore") maps an unrecognised category to an
+    all-zero row instead of raising. A file writing ``Weekend`` as "True" or
+    ``Month`` as "nov" therefore scores successfully with that feature silently
+    switched off. Each variation below is verified to genuinely break scoring
+    when passed straight to the model, and to be repaired by alignment.
+    """
+    mutated = mutate(real_rows.copy())
+
+    unaligned = model.predict_proba(mutated)[:, 1]
+    assert unaligned != pytest.approx(reference_probabilities, abs=1e-9), (
+        f"{label} was expected to corrupt predictions without alignment; "
+        f"if this fails the test no longer guards anything."
+    )
+
+    aligned = _aligned_probabilities(model, mutated)
+    assert aligned == pytest.approx(reference_probabilities, abs=1e-12)
+
+
+def test_extra_columns_are_ignored(model, real_rows, reference_probabilities) -> None:
+    """Unrelated trailing columns do not disturb scoring."""
+    padded = real_rows.copy()
+    padded["session_id"] = range(len(padded))
+    padded["campaign"] = "spring_sale"
+    probabilities = _aligned_probabilities(model, padded)
+    assert probabilities == pytest.approx(reference_probabilities, abs=1e-12)
+
+
+def test_too_few_columns_is_rejected(real_rows) -> None:
+    """A file that cannot supply every feature is refused, not guessed at."""
+    narrow = real_rows.iloc[:, :5].copy()
+    narrow.columns = [f"col_{i}" for i in range(5)]
+    with pytest.raises(ValueError, match="at least"):
+        inference.align_columns(narrow)
+
+
+def test_positional_matching_can_be_disabled(real_rows) -> None:
+    """Callers needing certainty can require real name matches."""
+    anonymous = real_rows.copy()
+    anonymous.columns = [f"col_{i}" for i in range(real_rows.shape[1])]
+    with pytest.raises(ValueError, match="Could not find"):
+        inference.align_columns(anonymous, allow_positional=False)
+
+
+def test_unrelated_table_is_scored_but_marked_untrustworthy(model) -> None:
+    """An unrelated table with enough columns scores, and says so.
+
+    This is the documented risk of positional matching: the model cannot tell
+    that the file is not browsing data. The contract is that it never claims
+    the mapping is reliable.
+    """
+    unrelated = pd.DataFrame(
+        {f"field_{i}": ["x"] * 4 if i % 3 == 0 else range(4) for i in range(20)}
+    )
+    alignment = inference.align_columns(unrelated)
+    assert alignment.strategy == "positional"
+    assert alignment.trustworthy is False
+    probabilities = model.predict_proba(alignment.frame)[:, 1]
+    assert ((probabilities >= 0) & (probabilities <= 1)).all()
+
+
+# --------------------------------------------------------------------------- #
 # Decision-policy override
 # --------------------------------------------------------------------------- #
 

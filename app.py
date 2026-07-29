@@ -644,8 +644,15 @@ def page_batch(
     render_header("Score an exported analytics file and rank sessions by purchase intent.")
 
     required = schema["feature_order"]
-    st.markdown(f"Upload a CSV containing these {len(required)} columns:")
+    st.markdown(
+        f"Upload a CSV. The model needs these {len(required)} fields, in this order:"
+    )
     st.code(", ".join(required), language="text")
+    st.caption(
+        "Column names are matched exactly where possible, then ignoring case and "
+        "punctuation. If the names cannot be matched at all, columns are read in "
+        "the order above instead - the mapping used is always shown before results."
+    )
 
     template = pd.DataFrame([schema["presets"]["High-intent buyer"]])[required]
     st.download_button(
@@ -667,17 +674,59 @@ def page_batch(
         return
 
     st.caption(f"Loaded {len(frame):,} rows x {frame.shape[1]} columns.")
-    missing = [column for column in required if column not in frame.columns]
-    if missing:
-        st.error(f"The file is missing {len(missing)} required column(s): {', '.join(missing)}")
+
+    try:
+        alignment = inference.align_columns(frame)
+    except ValueError as exc:
+        st.error(f"This file cannot be scored: {exc}")
         return
+
+    if alignment.strategy == "positional":
+        st.warning(
+            "**Column names did not match, so they were read in order.** The model "
+            "cannot tell whether this file describes browsing sessions at all - it "
+            "will score any table with enough columns. Check the mapping below "
+            "before trusting these results.",
+            icon="⚠️",
+        )
+    elif alignment.strategy == "normalised":
+        st.info("Column names matched after ignoring case and punctuation.")
+
+    if alignment.strategy != "exact":
+        with st.expander(
+            "Column mapping applied",
+            expanded=alignment.strategy == "positional",
+        ):
+            st.dataframe(
+                pd.DataFrame(
+                    {
+                        "your column": list(alignment.mapping.values()),
+                        "read as": list(alignment.mapping.keys()),
+                    }
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+
+    for note in alignment.notes:
+        st.caption(note)
 
     with st.spinner(f"Scoring {len(frame):,} sessions..."):
         try:
-            scored = inference.predict_batch(frame, model, metadata, threshold)
+            scored = inference.predict_batch(
+                alignment.frame, model, metadata, threshold
+            )
         except Exception as exc:
             st.error(f"Batch scoring failed: {type(exc).__name__}: {exc}")
             return
+
+    output_columns = ["purchase_probability", "prediction", "recommendation"]
+    # Scoring runs on the aligned copy, but the download is built from the file
+    # the user actually uploaded, so their own columns - session ids, campaign
+    # tags - survive alongside the predictions.
+    scored_output = frame.copy()
+    for column in output_columns:
+        scored_output[column] = scored[column].to_numpy()
 
     flagged = int((scored["purchase_probability"] >= threshold).sum())
 
@@ -688,16 +737,28 @@ def page_batch(
     cols[3].metric("Mean probability", f"{scored['purchase_probability'].mean():.3f}")
 
     st.markdown("##### Highest-intent sessions")
+    preview = scored.nlargest(min(25, len(scored)), "purchase_probability")
     st.dataframe(
-        scored.nlargest(min(25, len(scored)), "purchase_probability")[
-            ["purchase_probability", "prediction", "PageValues", "ProductRelated", "ExitRates", "VisitorType"]
+        preview[
+            [
+                "purchase_probability",
+                "prediction",
+                "PageValues",
+                "ProductRelated",
+                "ExitRates",
+                "VisitorType",
+            ]
         ],
-        width='stretch',
+        width="stretch",
         hide_index=True,
+    )
+    st.caption(
+        "Feature columns shown as the model read them, after any renaming or "
+        "type conversion described above."
     )
     st.download_button(
         "Download all scored sessions (CSV)",
-        data=scored.to_csv(index=False).encode("utf-8"),
+        data=scored_output.to_csv(index=False).encode("utf-8"),
         file_name=f"scored_sessions_{datetime.now():%Y%m%d_%H%M%S}.csv",
         mime="text/csv",
         type="primary",

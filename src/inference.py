@@ -9,6 +9,7 @@ scaling and encoding exactly as it did during training.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -314,6 +315,287 @@ def predict(
         confidence_band=_confidence_band(probability),
         recommendation=_recommendation(probability, threshold),
         drivers=metadata.get("top_features", {}),
+    )
+
+
+@dataclass(frozen=True)
+class ColumnAlignment:
+    """Result of mapping an arbitrary uploaded file onto the model's schema.
+
+    Attributes:
+        frame: The uploaded data reduced to the model's features, renamed and
+            cast to the dtypes the pipeline was fitted on.
+        strategy: How the columns were matched - ``exact``, ``normalised`` or
+            ``positional``.
+        mapping: Required feature name -> the source column it was taken from.
+        notes: Human-readable remarks about coercions and assumptions applied.
+        trustworthy: False when columns were matched by position, meaning the
+            mapping is an assumption the uploader must confirm rather than
+            something the data itself supports.
+    """
+
+    frame: pd.DataFrame
+    strategy: str
+    mapping: dict[str, str] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+    trustworthy: bool = True
+
+
+def _normalise_name(name: Any) -> str:
+    """Reduce a column name to a comparable form.
+
+    ``Page Values``, ``page_values`` and ``PageValues`` all describe the same
+    field when exported by different analytics tools, so casing, spacing and
+    punctuation are stripped before matching.
+
+    Args:
+        name: Raw column label.
+
+    Returns:
+        Lowercase alphanumeric form of the name.
+    """
+    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+
+
+def fitted_categories(model: Pipeline) -> dict[str, list[Any]]:
+    """Read the category values the encoder was actually fitted on.
+
+    The encoder is the authority on what counts as a known level, so canonical
+    spellings are taken from it rather than duplicated in a constant that could
+    drift away from the artifact after a retrain.
+
+    Args:
+        model: The fitted pipeline.
+
+    Returns:
+        Mapping of categorical feature name to its fitted categories. Empty if
+        the encoder cannot be located.
+    """
+    try:
+        column_transformer = model.named_steps["preprocess"]
+        for _, transformer, columns in column_transformer.transformers_:
+            # Located by capability rather than by branch or step name, so
+            # renaming a pipeline step cannot silently empty this mapping and
+            # disable canonicalisation without any test noticing.
+            encoder = None
+            if hasattr(transformer, "categories_"):
+                encoder = transformer
+            elif hasattr(transformer, "named_steps"):
+                encoder = next(
+                    (
+                        step
+                        for step in transformer.named_steps.values()
+                        if hasattr(step, "categories_")
+                    ),
+                    None,
+                )
+            if encoder is None:
+                continue
+            return {
+                str(column): list(values)
+                for column, values in zip(columns, encoder.categories_)
+            }
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not read fitted categories: %s", exc)
+    return {}
+
+
+def _coerce_to_training_types(
+    frame: pd.DataFrame,
+    categories: dict[str, list[Any]] | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Cast columns to the exact dtypes the fitted encoder expects.
+
+    This is not cosmetic. ``OneHotEncoder`` was fitted with
+    ``handle_unknown="ignore"``, so a category it does not recognise silently
+    becomes an all-zero row rather than an error - and an integer-coded field
+    arriving as ``2.0`` instead of ``2`` does not match the fitted category.
+    The prediction still succeeds and is quietly wrong. Casting here keeps the
+    uploaded data on the same footing as the training data.
+
+    Args:
+        frame: Data already reduced to the model's feature columns.
+
+    Returns:
+        A ``(coerced_frame, notes)`` tuple describing any values that could not
+        be interpreted and were left for the pipeline's imputer to fill.
+    """
+    out = frame.copy()
+    notes: list[str] = []
+
+    for name in config.TRUE_NUMERIC_FEATURES:
+        before = out[name].notna().sum()
+        out[name] = pd.to_numeric(out[name], errors="coerce").astype(float)
+        lost = int(before - out[name].notna().sum())
+        if lost:
+            notes.append(
+                f"{name}: {lost} value(s) were not numeric and will be imputed."
+            )
+
+    for name in config.INTEGER_CODED_CATEGORICAL_FEATURES:
+        numeric = pd.to_numeric(out[name], errors="coerce")
+        unparsed = int(numeric.isna().sum() - out[name].isna().sum())
+        # -1 is deliberately outside every fitted category, so the encoder
+        # treats it as unknown instead of the imputer inventing a plausible
+        # browser or region that the row never actually had.
+        out[name] = numeric.fillna(-1).round().astype(int)
+        if unparsed > 0:
+            notes.append(
+                f"{name}: {unparsed} value(s) were not integer codes and are "
+                f"treated as unknown."
+            )
+
+    truthy = {"true", "1", "yes", "y", "t"}
+    falsy = {"false", "0", "no", "n", "f"}
+
+    def _to_bool(value: Any) -> bool:
+        text = str(value).strip().lower()
+        if text in truthy:
+            return True
+        if text in falsy:
+            return False
+        return bool(value) if pd.notna(value) else False
+
+    if "Weekend" in out.columns:
+        out["Weekend"] = out["Weekend"].map(_to_bool).astype(bool)
+
+    # Text categories are matched to the fitted spelling case-insensitively.
+    # "nov" and "Nov" are the same month, but the encoder only recognises the
+    # spelling it saw in training - anything else becomes an all-zero row and
+    # quietly removes the month signal from the prediction.
+    categories = categories or {}
+    for name in ("Month", "VisitorType"):
+        out[name] = out[name].astype(str).str.strip()
+        known = categories.get(name)
+        if not known:
+            continue
+        canonical = {str(level).strip().casefold(): level for level in known}
+        recased = 0
+
+        def _canonicalise(value: Any) -> Any:
+            nonlocal recased
+            match = canonical.get(str(value).strip().casefold())
+            if match is not None and match != value:
+                recased += 1
+                return match
+            return value
+
+        out[name] = out[name].map(_canonicalise)
+        if recased:
+            notes.append(
+                f"{name}: {recased} value(s) matched a known category after "
+                f"ignoring case."
+            )
+
+    return out, notes
+
+
+def align_columns(
+    frame: pd.DataFrame,
+    allow_positional: bool = True,
+    model: Pipeline | None = None,
+) -> ColumnAlignment:
+    """Map an uploaded file onto the model's feature schema.
+
+    Three strategies are tried in descending order of confidence:
+
+    1. **exact** - every required column is present by name.
+    2. **normalised** - names match once casing and punctuation are ignored,
+       which covers the same fields exported by a different tool.
+    3. **positional** - names carry no usable information, so the first columns
+       are assumed to be the features in their trained order.
+
+    Positional matching is an assumption about the file, not a fact derived
+    from it: an unrelated table with enough columns will be scored happily and
+    the resulting probabilities will be meaningless. The strategy is reported
+    back so the caller can surface that rather than hide it.
+
+    Args:
+        frame: The uploaded data, exactly as parsed.
+        allow_positional: Whether to fall back to positional matching.
+        model: Pre-loaded pipeline, used to read the encoder's fitted category
+            spellings. Loaded from disk if omitted.
+
+    Returns:
+        The alignment, including the strategy used and any coercion notes.
+
+    Raises:
+        ValueError: If the file has too few columns, or names do not match and
+            positional matching is disallowed.
+    """
+    required = list(config.ALL_FEATURES)
+    notes: list[str] = []
+    categories = fitted_categories(model or load_model())
+
+    present = [name for name in required if name in frame.columns]
+    if len(present) == len(required):
+        selected = frame[required].copy()
+        mapping = {name: name for name in required}
+        coerced, coercion_notes = _coerce_to_training_types(selected, categories)
+        return ColumnAlignment(
+            frame=coerced,
+            strategy="exact",
+            mapping=mapping,
+            notes=notes + coercion_notes,
+        )
+
+    lookup: dict[str, str] = {}
+    for column in frame.columns:
+        lookup.setdefault(_normalise_name(column), str(column))
+    resolved = {name: lookup.get(_normalise_name(name)) for name in required}
+
+    if all(resolved.values()):
+        mapping = {name: str(source) for name, source in resolved.items()}
+        selected = frame[[mapping[name] for name in required]].copy()
+        selected.columns = required
+        renamed = [name for name in required if mapping[name] != name]
+        if renamed:
+            notes.append(
+                f"Matched {len(renamed)} column(s) by name ignoring case and "
+                f"punctuation, e.g. '{mapping[renamed[0]]}' -> '{renamed[0]}'."
+            )
+        coerced, coercion_notes = _coerce_to_training_types(selected, categories)
+        return ColumnAlignment(
+            frame=coerced,
+            strategy="normalised",
+            mapping=mapping,
+            notes=notes + coercion_notes,
+        )
+
+    unmatched = [name for name, source in resolved.items() if source is None]
+
+    if not allow_positional:
+        raise ValueError(
+            f"Could not find {len(unmatched)} required column(s): {sorted(unmatched)}"
+        )
+
+    if frame.shape[1] < len(required):
+        raise ValueError(
+            f"Positional matching needs at least {len(required)} columns; this "
+            f"file has {frame.shape[1]}."
+        )
+
+    sources = [str(column) for column in frame.columns[: len(required)]]
+    mapping = dict(zip(required, sources))
+    selected = frame.iloc[:, : len(required)].copy()
+    selected.columns = required
+
+    notes.append(
+        f"{len(unmatched)} column name(s) did not match the schema, so columns "
+        f"were mapped by position instead."
+    )
+    if frame.shape[1] > len(required):
+        notes.append(
+            f"Only the first {len(required)} of {frame.shape[1]} columns were used."
+        )
+
+    coerced, coercion_notes = _coerce_to_training_types(selected, categories)
+    return ColumnAlignment(
+        frame=coerced,
+        strategy="positional",
+        mapping=mapping,
+        notes=notes + coercion_notes,
+        trustworthy=False,
     )
 
 

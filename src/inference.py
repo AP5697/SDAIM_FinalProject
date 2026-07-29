@@ -731,21 +731,27 @@ def explain_prediction(
 
     try:
         import numpy as np
-        import shap
+        import xgboost as xgb
 
         frame = build_frame(payload)
         engineered = model.named_steps["engineer"].transform(frame)
         transformed = model.named_steps["preprocess"].transform(engineered)
-        explainer = shap.TreeExplainer(model.named_steps["classifier"])
-        values = explainer.shap_values(transformed)
-        if isinstance(values, list):
-            values = values[1]
-        row = np.asarray(values).reshape(-1)
+        if hasattr(transformed, "toarray"):  # sparse one-hot output
+            transformed = transformed.toarray()
+        matrix = np.asarray(transformed, dtype=np.float32)
 
-        base = explainer.expected_value
-        if isinstance(base, (list, tuple, np.ndarray)):
-            base = np.asarray(base).reshape(-1)[-1]
-        base_probability = float(1.0 / (1.0 + np.exp(-float(base))))
+        # XGBoost implements exact TreeSHAP itself, so the `shap` package is not
+        # needed here. Using it avoids loading a second compiled extension that
+        # must agree with this xgboost and numpy build at the C level - a
+        # mismatch there segfaults the process, which no try/except can catch.
+        # Verified to reproduce shap's values exactly (max difference 0.0).
+        booster = model.named_steps["classifier"].get_booster()
+        contributions = booster.predict(xgb.DMatrix(matrix), pred_contribs=True)
+
+        # One column per feature plus a trailing bias column, all in log-odds.
+        row = np.asarray(contributions)[0]
+        row, bias = row[:-1], float(row[-1])
+        base_probability = float(1.0 / (1.0 + np.exp(-bias)))
 
         names = _transformed_feature_names(model)
         if len(names) != row.size:

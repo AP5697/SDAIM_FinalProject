@@ -14,7 +14,10 @@ numpy==2.4.6
 scipy==1.18.0
 joblib==1.5.3
 
-# Powers the per-session "why this score" attribution. The application degrades
-# gracefully to global importances if this import fails, so a resolver conflict
-# on the Space costs a feature rather than the whole app.
-shap==0.52.0
+# NOTE: `shap` is deliberately NOT a runtime dependency. It was, and its
+# compiled extension segfaulted the Space (exit 139) against this xgboost and
+# numpy build. A segfault kills the interpreter, so the application's fallback
+# never ran. Per-session attribution now uses XGBoost's own exact TreeSHAP via
+# `pred_contribs=True`, which produces identical values with no extra native
+# library. `shap` remains a development-only import in src/train.py, guarded by
+# try/except, for the global importance table.

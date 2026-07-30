@@ -593,8 +593,13 @@ def test_mlflow_folder_can_never_shadow_the_mlflow_library() -> None:
         "A top-level mlflow/ directory can shadow the installed MLflow library."
     )
 
-    import mlflow as mlflow_library
-
+    # The directory assertions above are the point of this test and must run
+    # everywhere. Confirming which mlflow actually got imported can only happen
+    # where it is installed - CI installs requirements.txt alone, and MLflow is
+    # deliberately absent from it.
+    mlflow_library = pytest.importorskip(
+        "mlflow", reason="MLflow is a development-only dependency"
+    )
     assert "site-packages" in str(mlflow_library.__file__), (
         f"mlflow resolved to {mlflow_library.__file__}, not the installed library."
     )

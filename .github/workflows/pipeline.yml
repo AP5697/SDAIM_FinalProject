@@ -275,7 +275,23 @@ jobs:
           cp models/metadata.json /tmp/baseline_metadata.json
           cp models/model.joblib /tmp/baseline_model.joblib
 
-          python -m mlops.model_building.train
+          # The step runs under `bash -e`, so a failing training command would
+          # abort here with a bare "exit code 1" and no indication of why - the
+          # traceback lives only in the raw log, which needs authentication to
+          # read. Capture it and re-emit the tail as ::error:: annotations,
+          # which are visible on the run summary itself.
+          set +e
+          python -m mlops.model_building.train 2>&1 | tee /tmp/train.log
+          training_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$training_status" -ne 0 ]; then
+            echo "::error::Training exited with status ${training_status}. Tail of the output:"
+            tail -n 15 /tmp/train.log | while IFS= read -r line; do
+              echo "::error::  ${line}"
+            done
+            exit "$training_status"
+          fi
 
           python - <<'PY'
           import json, sys

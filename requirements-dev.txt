@@ -8,8 +8,17 @@
 # Install with:
 #     pip install -r requirements.txt -r requirements-dev.txt
 
-# Experiment tracking. src/tracking.py degrades to a no-op without it, so the
-# training run still succeeds if this is missing.
+# Figure generation in mlops/model_building/visualisation.py, which train.py
+# and the EDA script import at module level. Undeclared until now: they were
+# present locally, and matplotlib happened to arrive transitively via mlflow,
+# so the gap only appeared once CI ran training in a clean environment and the
+# `import seaborn` failed. The deployed app imports neither - it never touches
+# visualisation.py - which is why they belong here and not in requirements.txt.
+matplotlib==3.11.0
+seaborn==0.13.2
+
+# Experiment tracking. mlops/model_building/tracking.py degrades to a no-op
+# without it, so the training run still succeeds if this is missing.
 mlflow==3.14.0
 
 # NOTE: `shap` is deliberately not listed, in development either.

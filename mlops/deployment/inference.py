@@ -9,6 +9,9 @@ scaling and encoding exactly as it did during training.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -703,6 +706,76 @@ def _raw_value_for(
     return ""
 
 
+#: Cached result of the TreeSHAP safety probe below. None until first checked.
+_ATTRIBUTION_SAFE: bool | None = None
+
+#: Set to 1 to skip attribution entirely without probing.
+ATTRIBUTION_DISABLED_ENV_VAR = "DISABLE_LOCAL_ATTRIBUTION"
+
+
+def _attribution_is_safe() -> bool:
+    """Check, out of process, whether TreeSHAP can run without crashing.
+
+    XGBoost computes TreeSHAP in native code, and on some Linux builds that call
+    segfaults against this model. A segfault is not an exception: it terminates
+    the interpreter outright, so wrapping the call in ``try``/``except`` provides
+    no protection at all. This is exactly how the deployed Space died twice -
+    first through the ``shap`` package, then through XGBoost's own equivalent.
+
+    The only way to survive it is to not be the process that crashes. This runs
+    the same call once in a subprocess: if the child dies, attribution is
+    disabled for the rest of this process's life and the application falls back
+    to global importances. If the child returns cleanly, the call is known-good
+    here and is made in-process afterwards, at full speed.
+
+    Returns:
+        True when TreeSHAP completed in the probe subprocess.
+    """
+    global _ATTRIBUTION_SAFE
+    if _ATTRIBUTION_SAFE is not None:
+        return _ATTRIBUTION_SAFE
+
+    if os.environ.get(ATTRIBUTION_DISABLED_ENV_VAR, "").strip() not in ("", "0", "false"):
+        logger.info("Per-session attribution disabled by environment variable.")
+        _ATTRIBUTION_SAFE = False
+        return _ATTRIBUTION_SAFE
+
+    probe = (
+        "import joblib, numpy as np, xgboost as xgb, json, sys\n"
+        "from mlops.deployment import inference\n"
+        "model = joblib.load(inference.config.MODEL_FILE)\n"
+        "schema = inference.load_schema()\n"
+        "frame = inference.build_frame(schema['presets']['High-intent buyer'])\n"
+        "eng = model.named_steps['engineer'].transform(frame)\n"
+        "trans = model.named_steps['preprocess'].transform(eng)\n"
+        "trans = trans.toarray() if hasattr(trans, 'toarray') else trans\n"
+        "m = np.asarray(trans, dtype=np.float32)\n"
+        "model.named_steps['classifier'].get_booster().predict("
+        "xgb.DMatrix(m), pred_contribs=True)\n"
+        "print('TREESHAP_OK')\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            cwd=str(config.PROJECT_ROOT),
+        )
+        _ATTRIBUTION_SAFE = result.returncode == 0 and "TREESHAP_OK" in result.stdout
+        if not _ATTRIBUTION_SAFE:
+            logger.warning(
+                "TreeSHAP probe failed (exit %s); per-session attribution disabled. %s",
+                result.returncode,
+                (result.stderr or "").strip()[-300:],
+            )
+    except Exception as exc:  # pragma: no cover - environment dependent
+        logger.warning("TreeSHAP probe could not run: %s", exc)
+        _ATTRIBUTION_SAFE = False
+
+    return _ATTRIBUTION_SAFE
+
+
 def explain_prediction(
     payload: dict[str, Any],
     model: Pipeline | None = None,
@@ -715,8 +788,11 @@ def explain_prediction(
     log-odds space: the base value plus every contribution reconstructs the
     model's output for this row exactly.
 
-    Failure is tolerated rather than raised - the application degrades to global
-    importances - because attribution is an enhancement, not a requirement.
+    The underlying TreeSHAP call is native code that segfaults on some Linux
+    builds, so it is proved safe out of process before ever being made here -
+    see :func:`_attribution_is_safe`. Where it is not safe, and for any ordinary
+    exception, this degrades to an unavailable explanation and the application
+    shows global importances instead.
 
     Args:
         payload: Raw feature mapping for one session.
@@ -728,6 +804,17 @@ def explain_prediction(
     """
     model = model or load_model()
     probability = float(model.predict_proba(build_frame(payload))[0, 1])
+
+    if not _attribution_is_safe():
+        return Explanation(
+            base_probability=float("nan"),
+            probability=probability,
+            available=False,
+            message=(
+                "TreeSHAP is not available in this environment; the model's "
+                "global feature importances apply instead."
+            ),
+        )
 
     try:
         import numpy as np

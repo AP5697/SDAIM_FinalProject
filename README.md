@@ -18,7 +18,7 @@ Predicts whether a live e-commerce browsing session will end in a purchase, so a
 retailer can fire a real-time incentive at the sessions that are *winnable but not
 yet won* — instead of discounting everyone or no one.
 
-[![Deploy](https://github.com/AP5697/SDAIM_FinalProject/actions/workflows/deploy.yml/badge.svg)](https://github.com/AP5697/SDAIM_FinalProject/actions/workflows/deploy.yml)
+[![MLOps pipeline](https://github.com/AP5697/SDAIM_FinalProject/actions/workflows/pipeline.yml/badge.svg)](https://github.com/AP5697/SDAIM_FinalProject/actions/workflows/pipeline.yml)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.9.0-F7931E?logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
 [![Streamlit](https://img.shields.io/badge/streamlit-1.59.1-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
@@ -192,7 +192,7 @@ Final_project/
 ├── reports/tables/             # 15 generated result tables
 ├── docs/                       # Presentation script and workflow one-pager
 ├── .streamlit/config.toml      # Theme and upload limits
-└── .github/workflows/deploy.yml
+└── .github/workflows/pipeline.yml   # 4-stage MLOps pipeline
 ```
 
 `README.md` and `requirements.txt` stay at the repository root because Hugging
@@ -240,12 +240,34 @@ mean of +0.126 (Brier 0.0952). This is a consequence of training with
 which is all the application uses them for, but should not be read as literal
 conversion frequencies. See **Model insights → Calibration** in the app.
 
-## Deployment
+## The pipeline
 
-Pushing to `main` triggers `.github/workflows/deploy.yml`, which runs the test
-suite and then syncs the application files to the Hugging Face Space using an
-`HF_TOKEN` stored as a GitHub Actions secret. The Space rebuilds automatically.
-See the workflow file for setup instructions.
+Pushing to `main` triggers `.github/workflows/pipeline.yml`, which runs four
+stages mirroring the project's own structure. Each gates the next, so nothing
+reaches the live Space unless every stage before it is green:
+
+```
+register-dataset ──▶ data-prep ──▶ model-training ──▶ deploy-hosting
+```
+
+| Stage | What it asserts |
+|---|---|
+| **register-dataset** | The CSV is present and unchanged: checksum, row count, expected columns, and the 15.47% target rate every committed metric assumes |
+| **data-prep** | The preprocessing pipeline fits and transforms the real data — row count preserved, feature names aligned, integer-coded identifiers still one-hot encoded rather than scaled, split still stratified |
+| **model-training** | The committed artifact loads and scores; retraining from scratch **reproduces the committed baseline** within 0.01 on PR-AUC, ROC-AUC, F1, recall and precision; all 49 tests pass |
+| **deploy-hosting** | Space metadata is valid, `app_file` exists, then the application files sync to Hugging Face using the `HF_TOKEN` secret |
+
+**On the training stage.** It retrains but does *not* deploy what it trains.
+The retrained model is a reproducibility check — it answers "is this still the
+pipeline that produced the model we serve?" — after which the committed,
+tested artifact is restored and deployed. That keeps the metrics quoted in this
+README the ones actually shipped, while still failing loudly if the pipeline
+ever stops reproducing them.
+
+The gate was verified in both directions before being relied on: an identical
+baseline passes, and a deliberately injected 0.25 drift in PR-AUC fails the run
+naming the offending metric. A gate only ever observed passing is
+indistinguishable from no gate.
 
 Note that `python_version` in this file's front-matter and `PYTHON_VERSION` in
 the workflow must stay in step — `xgboost`, `scipy` and `shap` all require

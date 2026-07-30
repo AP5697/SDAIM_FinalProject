@@ -1,0 +1,595 @@
+# MLOps pipeline: dataset -> preparation -> training -> hosting.
+#
+# The four jobs mirror the stages of the project itself, so a run reads as the
+# pipeline it represents rather than as one opaque "CI" block. Each stage gates
+# the next: nothing is deployed unless the dataset is intact, the preprocessing
+# builds, the model reproduces its committed baseline and every test passes.
+#
+# ── One-time setup ──────────────────────────────────────────────────────────
+#  1. Create a Hugging Face Space:  https://huggingface.co/new-space
+#       SDK: Streamlit    Hardware: CPU basic (free)
+#  2. Create an access token with **write** scope:
+#       https://huggingface.co/settings/tokens
+#  3. In this GitHub repository go to
+#       Settings -> Secrets and variables -> Actions -> New repository secret
+#       Name:  HF_TOKEN        Value: <paste the token>
+#     The token is never written into any file in this repository, and GitHub
+#     masks it in workflow logs. Rotate it immediately if it is ever exposed.
+#  4. Edit HF_USERNAME and HF_SPACE_NAME below to match your Space.
+# ────────────────────────────────────────────────────────────────────────────
+
+name: MLOps pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allows a manual re-run from the Actions tab
+
+env:
+  # ---- Target Hugging Face Space ----
+  HF_USERNAME: Aishawarya
+  HF_SPACE_NAME: SDAIM_Final
+  # -----------------------------------
+  # 3.12 is a hard floor, not a preference: xgboost 3.3.0 and scipy 1.18.0 both
+  # declare requires_python >=3.12, so pip cannot resolve this requirements.txt
+  # on 3.11. Must stay in step with python_version in README.md, which is what
+  # the Hugging Face Space itself builds against.
+  PYTHON_VERSION: "3.12"
+
+concurrency:
+  # A newer push supersedes an in-flight run rather than racing it.
+  group: mlops-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ══════════════════════════════════════════════════ STAGE 1 ═══════════════
+  # Validates the input data before anything downstream trusts it. A dataset
+  # that has silently changed shape invalidates every metric the later stages
+  # assert against, so it is checked first and cheaply.
+  register-dataset:
+    name: register-dataset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate the dataset against its recorded provenance
+        run: |
+          python - <<'PY'
+          import hashlib, json, sys
+          import pandas as pd
+          from mlops.model_building import config
+
+          if not config.RAW_DATA_FILE.exists():
+              sys.exit(f"::error::Dataset missing at {config.RAW_DATA_FILE}")
+
+          digest = hashlib.sha256(config.RAW_DATA_FILE.read_bytes()).hexdigest()
+          frame = pd.read_csv(config.RAW_DATA_FILE)
+          recorded = json.loads(config.METADATA_FILE.read_text(encoding="utf-8"))["dataset"]
+
+          print(f"  file      {config.RAW_DATA_FILE.name}")
+          print(f"  sha256    {digest[:32]}...")
+          print(f"  shape     {frame.shape[0]} rows x {frame.shape[1]} columns")
+
+          problems = []
+          if frame.shape[0] != recorded["raw_rows"]:
+              problems.append(
+                  f"row count is {frame.shape[0]}, metadata records {recorded['raw_rows']}"
+              )
+
+          missing = [c for c in config.ALL_FEATURES + [config.TARGET_COLUMN]
+                     if c not in frame.columns]
+          if missing:
+              problems.append(f"missing expected column(s): {missing}")
+
+          # Every metric quoted downstream assumes this class balance; a shifted
+          # target rate would make the committed baseline meaningless.
+          rate = 100 * frame[config.TARGET_COLUMN].astype(bool).mean()
+          print(f"  positives {rate:.2f}%")
+          if abs(rate - 15.474) > 0.5:
+              problems.append(f"target rate {rate:.2f}% has drifted from 15.47%")
+
+          for problem in problems:
+              print(f"::error::Dataset: {problem}")
+          sys.exit(1 if problems else 0)
+          PY
+
+      - name: Record the dataset in the run summary
+        run: |
+          python - <<'PY'
+          import hashlib, os
+          import pandas as pd
+          from mlops.model_building import config
+
+          frame = pd.read_csv(config.RAW_DATA_FILE)
+          digest = hashlib.sha256(config.RAW_DATA_FILE.read_bytes()).hexdigest()
+          rate = 100 * frame[config.TARGET_COLUMN].astype(bool).mean()
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("### Stage 1 - register-dataset\n\n")
+              out.write("| | |\n|---|---|\n")
+              out.write(f"| Source | {config.DATASET_NAME} |\n")
+              out.write(f"| Rows x columns | {frame.shape[0]:,} x {frame.shape[1]} |\n")
+              out.write(f"| Positive rate | {rate:.2f}% |\n")
+              out.write(f"| SHA-256 | `{digest[:24]}...` |\n")
+              out.write(f"| Licence | {config.DATASET_LICENCE} |\n\n")
+          PY
+
+  # ══════════════════════════════════════════════════ STAGE 2 ═══════════════
+  # Exercises the preprocessing pipeline on the real data. This is the stage
+  # that would catch a feature-engineering change that breaks the transform,
+  # before eight minutes are spent training on top of it.
+  data-prep:
+    name: data-prep
+    runs-on: ubuntu-latest
+    needs: register-dataset
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build and exercise the preprocessing pipeline
+        run: |
+          python - <<'PY'
+          import sys
+          from sklearn.linear_model import LogisticRegression
+          from mlops.model_building import config
+          from mlops.model_building.data_loader import (
+              load_raw_data, split_features_target, stratified_split,
+          )
+          from mlops.model_building.preprocessing import (
+              build_pipeline, get_feature_names, remove_duplicates,
+          )
+
+          raw = load_raw_data()
+          deduplicated, removed = remove_duplicates(raw)
+          features, target = split_features_target(deduplicated)
+          x_train, x_test, y_train, y_test = stratified_split(features, target)
+
+          print(f"  duplicates removed  {removed}")
+          print(f"  train / test        {len(x_train)} / {len(x_test)}")
+
+          pipeline = build_pipeline(LogisticRegression(max_iter=200))
+          pipeline.fit(x_train, y_train)
+          transformed = pipeline.named_steps["preprocess"].transform(
+              pipeline.named_steps["engineer"].transform(x_test)
+          )
+          names = get_feature_names(pipeline)
+          print(f"  engineered features {config.ENGINEERED_FEATURES}")
+          print(f"  transformed columns {transformed.shape[1]}")
+
+          problems = []
+          if transformed.shape[0] != len(x_test):
+              problems.append("preprocessing changed the row count")
+          if transformed.shape[1] != len(names):
+              problems.append(
+                  f"{transformed.shape[1]} columns but {len(names)} feature names"
+              )
+
+          # The integer-coded identifiers must reach the one-hot branch. If they
+          # were ever scaled as numerics the model would be told that browser 13
+          # is greater than browser 2.
+          for source in config.INTEGER_CODED_CATEGORICAL_FEATURES:
+              if not any(n.split("__", 1)[-1].startswith(f"{source}_") for n in names):
+                  problems.append(f"{source} was not one-hot encoded")
+
+          # Stratification must preserve the class balance in both partitions.
+          if abs(y_train.mean() - y_test.mean()) > 0.01:
+              problems.append(
+                  f"split is not stratified: train {y_train.mean():.4f} vs "
+                  f"test {y_test.mean():.4f}"
+              )
+
+          for problem in problems:
+              print(f"::error::Preprocessing: {problem}")
+          sys.exit(1 if problems else 0)
+          PY
+
+      - name: Record the preparation in the run summary
+        run: |
+          python - <<'PY'
+          import os
+          from mlops.model_building import config
+          from mlops.model_building.data_loader import load_raw_data, split_features_target, stratified_split
+          from mlops.model_building.preprocessing import remove_duplicates
+
+          raw = load_raw_data()
+          deduplicated, removed = remove_duplicates(raw)
+          features, target = split_features_target(deduplicated)
+          x_train, x_test, _, _ = stratified_split(features, target)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("### Stage 2 - data-prep\n\n")
+              out.write("| | |\n|---|---|\n")
+              out.write(f"| Duplicates removed | {removed} |\n")
+              out.write(f"| Rows used | {len(deduplicated):,} |\n")
+              out.write(f"| Train / test | {len(x_train):,} / {len(x_test):,} (stratified) |\n")
+              out.write(f"| Engineered features | {', '.join(config.ENGINEERED_FEATURES)} |\n")
+              out.write(f"| One-hot encoded ids | {', '.join(config.INTEGER_CODED_CATEGORICAL_FEATURES)} |\n\n")
+          PY
+
+  # ══════════════════════════════════════════════════ STAGE 3 ═══════════════
+  # Retrains from scratch and asserts the result reproduces the committed
+  # baseline. This is the stage that answers "is this pipeline still the one
+  # that produced the model we ship" - if training silently stops reproducing,
+  # the run goes red here rather than the drift reaching production unnoticed.
+  #
+  # The committed artifact is what gets deployed; the retrained one is a check,
+  # not a replacement, so the metrics quoted in the report stay authoritative.
+  model-training:
+    name: model-training
+    runs-on: ubuntu-latest
+    needs: data-prep
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install runtime and development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Smoke-test the committed model artifact
+        # Catches the single most likely deployment failure: a joblib artifact
+        # pickled under a different scikit-learn version to the one pinned in
+        # requirements.txt, or against module paths that no longer exist.
+        run: |
+          python -c "
+          from mlops.deployment.inference import model_health
+          health = model_health()
+          print(health)
+          raise SystemExit(0 if health['ok'] else 1)
+          "
+
+      - name: Retrain and compare against the committed baseline
+        run: |
+          # Preserve the committed metadata: training overwrites it, and it is
+          # the baseline being compared against.
+          cp models/metadata.json /tmp/baseline_metadata.json
+          cp models/model.joblib /tmp/baseline_model.joblib
+
+          python -m mlops.model_building.train
+
+          python - <<'PY'
+          import json, sys
+
+          baseline = json.load(open("/tmp/baseline_metadata.json", encoding="utf-8"))
+          retrained = json.load(open("models/metadata.json", encoding="utf-8"))
+
+          # Training is seeded throughout, so on a fixed platform it is
+          # deterministic. A tolerance is still allowed because BLAS kernels can
+          # differ across runner hardware; anything beyond it is a real change.
+          TOLERANCE = 0.01
+          watched = ["pr_auc", "roc_auc", "f1", "recall", "precision"]
+
+          base_metrics = baseline["metrics_at_operating_threshold"]
+          new_metrics = retrained["metrics_at_operating_threshold"]
+
+          print(f"{'metric':<12} {'committed':>10} {'retrained':>10} {'delta':>9}")
+          problems = []
+          for key in watched:
+              before, after = base_metrics[key], new_metrics[key]
+              delta = after - before
+              flag = "" if abs(delta) <= TOLERANCE else "  <-- drift"
+              print(f"{key:<12} {before:>10.4f} {after:>10.4f} {delta:>+9.4f}{flag}")
+              if abs(delta) > TOLERANCE:
+                  problems.append(
+                      f"{key} moved {delta:+.4f} (committed {before:.4f}, "
+                      f"retrained {after:.4f}); tolerance is {TOLERANCE}"
+                  )
+
+          if baseline["model_name"] != retrained["model_name"]:
+              problems.append(
+                  f"model selection changed: {baseline['model_name']} -> "
+                  f"{retrained['model_name']}"
+              )
+
+          for problem in problems:
+              print(f"::error::Reproducibility: {problem}")
+          if problems:
+              sys.exit(1)
+          print("\nRetraining reproduced the committed baseline.")
+          PY
+
+      - name: Restore the committed artifact
+        # The retrained model proved the pipeline reproduces; the committed
+        # artifact is the one that has been tested and is quoted in the report,
+        # so it is what proceeds to deployment.
+        run: |
+          cp /tmp/baseline_metadata.json models/metadata.json
+          cp /tmp/baseline_model.joblib models/model.joblib
+          echo "  committed artifact restored for deployment"
+
+      - name: Run the test suite
+        run: python -m pytest tests/ -v --tb=short
+
+      - name: Record the training in the run summary
+        run: |
+          python - <<'PY'
+          import json, os
+          meta = json.load(open("models/metadata.json", encoding="utf-8"))
+          m = meta["metrics_at_operating_threshold"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("### Stage 3 - model-training\n\n")
+              out.write("Retrained from scratch and reproduced the committed baseline.\n\n")
+              out.write("| | |\n|---|---|\n")
+              out.write(f"| Selected model | {meta['model_name']} |\n")
+              out.write(f"| PR-AUC | {m['pr_auc']:.4f} |\n")
+              out.write(f"| ROC-AUC | {m['roc_auc']:.4f} |\n")
+              out.write(f"| Recall | {m['recall']:.4f} |\n")
+              out.write(f"| Threshold | {meta['operating_threshold']} |\n")
+              out.write(f"| Artifact size | {meta['model_size_mb']} MB |\n\n")
+          PY
+
+  # ══════════════════════════════════════════════════ STAGE 4 ═══════════════
+  deploy-hosting:
+    name: deploy-hosting
+    runs-on: ubuntu-latest
+    # Every preceding stage must be green. model-training transitively requires
+    # data-prep, which requires register-dataset, so this gates the whole chain.
+    needs: model-training
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+
+      - name: Confirm required deployment files exist
+        run: |
+          for file in mlops/deployment/app.py requirements.txt README.md                       mlops/deployment/inference.py mlops/model_building/config.py                       models/model.joblib                       models/metadata.json models/app_schema.json; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Required deployment file is missing: $file"
+              exit 1
+            fi
+            echo "  found $file"
+          done
+
+      - name: Confirm the Space Python version matches this workflow
+        # CI installing cleanly on 3.12 proves nothing if the Space builds on
+        # 3.11 - the failure would surface only after deployment, in the Space's
+        # build log. Catch the drift here instead.
+        run: |
+          readme_version=$(sed -n 's/^python_version:[[:space:]]*"\{0,1\}\([0-9.]*\)"\{0,1\}[[:space:]]*$/\1/p' README.md | head -1)
+          if [ -z "$readme_version" ]; then
+            echo "::error::No python_version found in the README front-matter."
+            exit 1
+          fi
+          if [ "$readme_version" != "${{ env.PYTHON_VERSION }}" ]; then
+            echo "::error::README python_version ($readme_version) does not match           workflow PYTHON_VERSION (${{ env.PYTHON_VERSION }}). The Space would build           against a different interpreter than CI tested."
+            exit 1
+          fi
+          echo "  Space and CI both build on Python $readme_version"
+
+      - name: Validate the Hugging Face Space metadata
+        # The Space rejects invalid front-matter at upload time, which is after
+        # verify has already passed - so the run goes red on a one-line README
+        # problem having spent minutes installing and testing. Check the
+        # constraints here instead.
+        run: |
+          python - <<'PY'
+          import re, sys
+
+          text = open("README.md", encoding="utf-8").read()
+          match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+          if not match:
+              sys.exit("::error::README.md has no YAML front-matter; the Space needs it to build.")
+
+          front = match.group(1)
+          problems = []
+
+          # Documented Hugging Face limit; exceeding it fails the upload.
+          desc = re.search(r"^short_description:\s*(.+?)\s*$", front, re.M)
+          if desc and len(desc.group(1)) > 60:
+              problems.append(
+                  f"short_description is {len(desc.group(1))} characters; the limit is 60."
+              )
+
+          for field in ("title", "sdk", "app_file"):
+              if not re.search(rf"^{field}:\s*\S", front, re.M):
+                  problems.append(f"required front-matter field '{field}' is missing.")
+
+          sdk = re.search(r"^sdk:\s*(\S+)", front, re.M)
+          if sdk and sdk.group(1) != "streamlit":
+              problems.append(f"sdk is '{sdk.group(1)}'; this app is a Streamlit Space.")
+
+          if problems:
+              for problem in problems:
+                  print(f"::error::Space metadata: {problem}")
+              sys.exit(1)
+          print("Space front-matter is valid.")
+          PY
+
+      - name: Confirm app_file points at a file that exists
+        # The Space builds successfully with a wrong app_file and only then
+        # reports "file not found" at runtime, so the mistake surfaces as a
+        # broken live app rather than a red pipeline. Written in shell rather
+        # than Python because the value is a plain path, not a pattern.
+        run: |
+          app_file=$(sed -n 's/^app_file:[[:space:]]*//p' README.md | head -1)
+          if [ -z "$app_file" ]; then
+            echo "::error::No app_file in the README front-matter."
+            exit 1
+          fi
+          if [ ! -f "$app_file" ]; then
+            echo "::error::app_file '$app_file' does not exist in the repository."
+            exit 1
+          fi
+          echo "  app_file $app_file exists"
+
+      - name: Install the Hugging Face client
+        run: pip install "huggingface_hub>=0.28,<2.0"
+
+      - name: Upload application files to the Space
+        env:
+          # Injected from the repository secret. Never hardcoded, never echoed.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          from huggingface_hub import HfApi
+
+          token = os.environ.get("HF_TOKEN")
+          if not token:
+              sys.exit(
+                  "::error::HF_TOKEN secret is not set. Add it under "
+                  "Settings -> Secrets and variables -> Actions."
+              )
+
+          repo_id = f"{os.environ['HF_USERNAME']}/{os.environ['HF_SPACE_NAME']}"
+          api = HfApi(token=token)
+
+          # Diagnose the token before attempting the upload. A failed
+          # upload_folder reports only the HTTP status, which is the same 403
+          # for "read-only token", "fine-grained token missing this repo" and
+          # "wrong account" - three problems with three different fixes. None of
+          # the checks below print the token itself.
+          try:
+              identity = api.whoami()
+          except Exception as exc:
+              sys.exit(
+                  f"::error::HF_TOKEN was rejected by Hugging Face ({exc}). "
+                  "Create a new token at https://huggingface.co/settings/tokens "
+                  "and update the GitHub secret."
+              )
+
+          name = identity.get("name", "<unknown>")
+          auth = (identity.get("auth") or {}).get("accessToken") or {}
+          role = auth.get("role", "<unknown>")
+          print(f"Authenticated as '{name}' with token role '{role}'.")
+
+          if role == "read":
+              sys.exit(
+                  "::error::HF_TOKEN is a READ token, which cannot deploy. "
+                  "Create a token with the 'write' role at "
+                  "https://huggingface.co/settings/tokens and replace the "
+                  "HF_TOKEN secret."
+              )
+
+          owner = os.environ["HF_USERNAME"]
+          if name != owner:
+              print(
+                  f"::warning::Token belongs to '{name}' but the target Space is "
+                  f"owned by '{owner}'. This only works if '{name}' has write "
+                  f"access to it."
+              )
+
+          if not api.repo_exists(repo_id=repo_id, repo_type="space"):
+              sys.exit(
+                  f"::error::Space '{repo_id}' does not exist or this token "
+                  f"cannot see it. Check HF_USERNAME and HF_SPACE_NAME in this "
+                  f"workflow against https://huggingface.co/{repo_id}"
+              )
+
+          # Only the files the Space needs to run. The dataset, notebooks,
+          # reports and CI configuration stay in GitHub and are never uploaded.
+          # Only the files the Space needs to run. README.md and requirements.txt
+          # must stay at the repository root - Hugging Face reads the Space
+          # configuration from the root README's front-matter and installs from
+          # the root requirements file. Everything else lives under mlops/, and
+          # `app_file` in that front-matter points at mlops/deployment/app.py.
+          allow = [
+              "README.md",
+              "requirements.txt",
+              ".streamlit/config.toml",
+              "mlops/__init__.py",
+              "mlops/deployment/*.py",
+              "mlops/model_building/*.py",
+              # Exported MLflow history; the app renders it without importing MLflow.
+              "mlops/mlflow/exports/*",
+              "models/model.joblib",
+              "models/metadata.json",
+              "models/app_schema.json",
+          ]
+
+          # Files that must NOT survive on the Space. The mlops/ and models/
+          # entries clear artifacts from previous deploys, so a renamed or
+          # deleted module does not linger and get imported. "src/*" and the
+          # root app.py remove the pre-restructure layout still present on the
+          # Space from earlier deploys. The Docker entries remove the scaffolding
+          # of the Streamlit-on-Docker template this Space was created from:
+          # leaving a Dockerfile next to `sdk: streamlit` gives the Space two
+          # conflicting sets of build instructions.
+          delete = [
+              "mlops/*",
+              "models/*",
+              "src/*",
+              "app.py",
+              "Dockerfile",
+              ".dockerignore",
+          ]
+
+          commit = api.upload_folder(
+              folder_path=".",
+              repo_id=repo_id,
+              repo_type="space",
+              allow_patterns=allow,
+              delete_patterns=delete,
+              commit_message=f"Deploy {os.environ['GITHUB_SHA'][:7]} from GitHub Actions",
+          )
+          print(f"Deployed to https://huggingface.co/spaces/{repo_id}")
+          print(f"Commit: {commit.commit_url}")
+          PY
+
+      - name: Summarise the deployment
+        run: |
+          {
+            echo "### Stage 4 - deploy-hosting 🚀"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Space | https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE_NAME} |"
+            echo "| Commit | \`${GITHUB_SHA::7}\` |"
+            echo "| Triggered by | @${GITHUB_ACTOR} |"
+            echo ""
+            echo "The Space rebuilds automatically. Allow 1-2 minutes, and note "
+            echo "that a free-tier Space sleeping after inactivity adds a "
+            echo "30-60 second cold start on the first request."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# ── If the pipeline goes red, check the failing stage ───────────────────────
+#  register-dataset  -> the CSV changed shape, or its target rate drifted from
+#                       the rate every committed metric assumes
+#  data-prep         -> a preprocessing change broke the transform, dropped the
+#                       one-hot routing for the integer-coded ids, or unbalanced
+#                       the stratified split
+#  model-training    -> either the committed artifact will not load (usually a
+#                       scikit-learn version or module-path mismatch), or
+#                       retraining no longer reproduces the committed metrics
+#  deploy-hosting    -> 1. "HF_TOKEN secret is not set": add the secret
+#                       2. 401/403: the token lacks **write** scope or was revoked
+#                       3. 404: HF_USERNAME / HF_SPACE_NAME do not match a Space
+#                       4. Space builds but errors: open its own build log; the
+#                          usual cause is a package present locally but absent
+#                          from requirements.txt
+# ────────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@
     "classifier__learning_rate": "0.01",
     "classifier__colsample_bytree": "0.8"
   },
-  "trained_at_utc": "2026-07-28T17:53:04+00:00",
+  "trained_at_utc": "2026-07-30T18:29:30+00:00",
   "dataset": {
     "name": "Online Shoppers Purchasing Intention Dataset",
     "source": "https://archive.ics.uci.edu/dataset/468/online+shoppers+purchasing+intention+dataset",
@@ -67,11 +67,11 @@
       "mcc": 0.58,
       "brier": 0.1271,
       "threshold": 0.5,
-      "latency_mean_ms": 8.187,
-      "latency_median_ms": 8.189,
-      "latency_p95_ms": 10.324,
-      "latency_max_ms": 11.526,
-      "search_seconds": 83.89
+      "latency_mean_ms": 8.184,
+      "latency_median_ms": 8.066,
+      "latency_p95_ms": 10.479,
+      "latency_max_ms": 11.087,
+      "search_seconds": 122.92
     },
     "Random Forest": {
       "accuracy": 0.8685,
@@ -84,11 +84,11 @@
       "mcc": 0.5971,
       "brier": 0.0926,
       "threshold": 0.5,
-      "latency_mean_ms": 48.933,
-      "latency_median_ms": 48.908,
-      "latency_p95_ms": 55.325,
-      "latency_max_ms": 58.517,
-      "search_seconds": 115.56
+      "latency_mean_ms": 34.468,
+      "latency_median_ms": 34.277,
+      "latency_p95_ms": 38.68,
+      "latency_max_ms": 40.217,
+      "search_seconds": 150.07
     },
     "XGBoost": {
       "accuracy": 0.871,
@@ -101,11 +101,11 @@
       "mcc": 0.6128,
       "brier": 0.0952,
       "threshold": 0.5,
-      "latency_mean_ms": 10.602,
-      "latency_median_ms": 10.372,
-      "latency_p95_ms": 13.491,
-      "latency_max_ms": 22.499,
-      "search_seconds": 20.08
+      "latency_mean_ms": 7.341,
+      "latency_median_ms": 7.113,
+      "latency_p95_ms": 9.299,
+      "latency_max_ms": 10.908,
+      "search_seconds": 32.77
     }
   },
   "tuning_comparison": {
@@ -113,19 +113,19 @@
       "baseline_pr_auc": 0.6459,
       "tuned_pr_auc": 0.6552,
       "improvement": 0.0093,
-      "search_seconds": 83.89
+      "search_seconds": 122.92
     },
     "Random Forest": {
       "baseline_pr_auc": 0.7174,
       "tuned_pr_auc": 0.7515,
       "improvement": 0.0341,
-      "search_seconds": 115.56
+      "search_seconds": 150.07
     },
     "XGBoost": {
       "baseline_pr_auc": 0.7232,
       "tuned_pr_auc": 0.754,
       "improvement": 0.0308,
-      "search_seconds": 20.08
+      "search_seconds": 32.77
     }
   },
   "leakage_experiment": {

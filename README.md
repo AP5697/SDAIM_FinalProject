@@ -103,18 +103,56 @@ streamlit run app.py
 To reproduce the model from scratch:
 
 ```bash
+pip install -r requirements.txt -r requirements-dev.txt
 python -m scripts.run_eda
 python -m src.train
+python -m scripts.add_calibration
 python -m scripts.build_app_assets
 python -m pytest tests/ -v
 ```
+
+## Experiment tracking (MLflow)
+
+`python -m src.train` records every training session to a local MLflow store.
+Browse it with:
+
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+Each session is one **parent run** holding the dataset shape, the split, the
+selection decision and the deployed configuration, with one **nested child run
+per candidate model** carrying its hyperparameter search result and held-out
+test metrics — so the three models are directly comparable in the UI.
+
+The store is generated locally and is not committed — run `python -m src.train`
+once and `mlflow.db` plus `mlartifacts/` appear, then open the UI above.
+
+Three decisions worth noting:
+
+- **SQLite, not the `./mlruns` file store.** MLflow 3.x puts the filesystem
+  backend in maintenance mode and raises rather than writing to it, so the older
+  `mlflow ui --backend-store-uri ./mlruns` form fails on this version.
+- **The store is gitignored.** GitHub push protection flags `mlflow.db` as a
+  "Lob Test API Key": in the raw SQLite page bytes a metric name abuts its
+  32-character hex run id, so `test_f1` + `e70688…f42` matches Lob's
+  `test_<32 hex>` key format exactly. It is a false positive, but the database
+  is regenerable derived data, so ignoring it beats teaching the scanner to be
+  ignored.
+- **Tracking cannot break training.** Every call in `src/tracking.py` degrades
+  to a no-op if MLflow is missing, disabled via `MLFLOW_DISABLED=1`, or raises.
+  Losing the experiment record is an inconvenience; losing the training run is
+  not. This is also why MLflow is in `requirements-dev.txt` and not
+  `requirements.txt` — the Space never imports it, and `models/model.joblib`
+  remains the single deployment artifact.
 
 ## Project structure
 
 ```
 Final_project/
 ├── app.py                      # Streamlit application (HF Space entry point)
-├── requirements.txt            # Exactly pinned runtime dependencies
+├── requirements.txt            # Exactly pinned runtime dependencies (the Space)
+├── requirements-dev.txt        # Training, MLflow and test dependencies only
 ├── README.md                   # This file; HF Space config in the front-matter
 ├── models/
 │   ├── model.joblib            # Complete fitted pipeline (preprocessing + model)
@@ -128,16 +166,17 @@ Final_project/
 │   ├── evaluation.py           # Metrics, threshold economics, error analysis
 │   ├── visualisation.py        # All figure generation
 │   ├── inference.py            # Thin wrapper the app imports
+│   ├── tracking.py             # MLflow logging, no-op if MLflow is absent
 │   └── utils.py                # Logging, timing, artifact persistence
 ├── scripts/
 │   ├── run_eda.py              # Full EDA run
 │   ├── build_app_assets.py     # Derives UI schema from the training data
 │   └── add_calibration.py      # Measures the calibration curve on the test split
-├── tests/test_pipeline.py      # 30 tests against the real artifact
+├── tests/test_pipeline.py      # 47 tests against the real artifact
 ├── data/raw/                   # Source CSV (committed for reproducibility)
 ├── reports/figures/            # 16 generated figures
 ├── reports/tables/             # 15 generated result tables
-├── docs/                       # Plain-English workflow one-pager
+├── docs/                       # Presentation script and workflow one-pager
 ├── .streamlit/config.toml      # Theme and upload limits
 └── .github/workflows/deploy.yml
 ```

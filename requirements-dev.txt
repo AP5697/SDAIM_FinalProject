@@ -1,0 +1,21 @@
+# Development-only dependencies: training, experiment tracking and testing.
+#
+# Deliberately separate from requirements.txt, which is installed by the Hugging
+# Face Space. Nothing here reaches the deployed application - MLflow records how
+# the model was arrived at, which is a build-time concern, and shipping it would
+# add a large dependency the Space never imports.
+#
+# Install with:
+#     pip install -r requirements.txt -r requirements-dev.txt
+
+# Experiment tracking. src/tracking.py degrades to a no-op without it, so the
+# training run still succeeds if this is missing.
+mlflow==3.14.0
+
+# Global SHAP importance table in src/train.py, guarded by try/except.
+# Per-prediction attribution in the app does NOT use this - it uses XGBoost's
+# own pred_contribs, which is why shap is absent from requirements.txt.
+shap==0.52.0
+
+# Test suite.
+pytest==9.1.1

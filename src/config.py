@@ -77,6 +77,31 @@ GITHUB_REPO_URL: Final[str] = "https://github.com/AP5697/SDAIM_FinalProject"
 HF_SPACE_URL: Final[str] = "https://huggingface.co/spaces/Aishawarya/SDAIM_Final"
 
 # --------------------------------------------------------------------------- #
+# MLflow experiment tracking
+#
+# Tracking is a development-time concern: it records how the deployed model was
+# arrived at, not how it is served. The Hugging Face Space never imports MLflow,
+# and models/model.joblib remains the single deployment artifact.
+#
+# A local SQLite store is used rather than a tracking server so the experiment
+# history is reproducible from a clone with no infrastructure to stand up.
+#
+# SQLite specifically, not the older './mlruns' file store: MLflow 3.x puts the
+# filesystem backend in maintenance mode and raises rather than writing to it.
+# SQLite is the supported local backend and is what `mlflow ui` expects here.
+# --------------------------------------------------------------------------- #
+
+MLFLOW_DB_FILE: Final[Path] = PROJECT_ROOT / "mlflow.db"
+# SQLAlchemy URL form; as_posix() keeps the Windows drive letter valid in a URI.
+MLFLOW_TRACKING_URI: Final[str] = f"sqlite:///{MLFLOW_DB_FILE.as_posix()}"
+MLFLOW_ARTIFACT_DIR: Final[Path] = PROJECT_ROOT / "mlartifacts"
+MLFLOW_EXPERIMENT_NAME: Final[str] = "purchase-intent-scorer"
+
+# Set MLFLOW_DISABLED=1 to skip tracking entirely, for example in CI where the
+# run history would be discarded with the runner anyway.
+MLFLOW_DISABLED_ENV_VAR: Final[str] = "MLFLOW_DISABLED"
+
+# --------------------------------------------------------------------------- #
 # Target
 # --------------------------------------------------------------------------- #
 

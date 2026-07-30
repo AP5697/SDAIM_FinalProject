@@ -4,7 +4,11 @@
 * text=auto eol=lf
 
 # Binary artifacts must never be line-ending converted - doing so corrupts them.
+# mlflow.db in particular is a SQLite database: a single CRLF substitution
+# inside a page header renders the whole run history unreadable.
 *.joblib binary
+*.db     binary
+*.sqlite binary
 *.png    binary
 *.jpg    binary
 *.pdf    binary

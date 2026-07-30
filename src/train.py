@@ -28,7 +28,7 @@ from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, cross_v
 from sklearn.pipeline import Pipeline
 from xgboost import XGBClassifier
 
-from src import config, evaluation, visualisation
+from src import config, evaluation, tracking, visualisation
 from src.data_loader import load_raw_data, split_features_target, stratified_split
 from src.preprocessing import build_pipeline, get_feature_names, remove_duplicates
 from src.utils import get_logger, save_json, save_table
@@ -183,6 +183,26 @@ def tune_model(
     )
     logger.info("%s best params: %s", name, search.best_params_)
 
+    tracking.log_params(
+        {
+            "model": name,
+            "search_iterations": config.N_SEARCH_ITERATIONS,
+            "cv_folds": config.CV_FOLDS,
+            "search_scoring": config.SEARCH_SCORING,
+            "random_state": config.RANDOM_STATE,
+            **search.best_params_,
+        }
+    )
+    tracking.log_metrics(
+        {
+            "cv_pr_auc_baseline": baseline_score,
+            "cv_pr_auc_tuned": float(search.best_score_),
+            "cv_pr_auc_improvement": float(search.best_score_) - baseline_score,
+            "baseline_cv_seconds": baseline_elapsed,
+            "search_seconds": search_elapsed,
+        }
+    )
+
     return {
         "name": name,
         "rationale": spec["rationale"],
@@ -322,6 +342,25 @@ def main() -> dict[str, Any]:
     logger.info("MODEL TRAINING - %s", config.DATASET_NAME)
     logger.info("=" * 78)
 
+    if tracking.is_enabled():
+        logger.info("MLflow tracking -> %s", config.MLFLOW_TRACKING_URI)
+    else:
+        logger.info("MLflow tracking inactive (%s)", tracking.unavailable_reason())
+
+    with tracking.run(f"training-session-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"):
+        return _train(tracking_active=tracking.is_enabled())
+
+
+def _train(tracking_active: bool) -> dict[str, Any]:
+    """Run the training session itself, inside whatever tracking context exists.
+
+    Args:
+        tracking_active: Whether an MLflow run is recording, used only for
+            logging decisions - the training itself is identical either way.
+
+    Returns:
+        The metadata written to ``models/metadata.json``.
+    """
     raw = load_raw_data()
     deduplicated, n_duplicates = remove_duplicates(raw)
     features, target = split_features_target(deduplicated)
@@ -330,11 +369,69 @@ def main() -> dict[str, Any]:
     scale_pos_weight = float((y_train == 0).sum() / max((y_train == 1).sum(), 1))
     logger.info("scale_pos_weight for XGBoost: %.4f", scale_pos_weight)
 
+    tracking.set_tags(
+        {
+            "dataset": config.DATASET_NAME,
+            "task": "binary classification",
+            "selection_metric": config.SEARCH_SCORING,
+        }
+    )
+    tracking.log_params(
+        {
+            "dataset_rows_raw": len(raw),
+            "dataset_rows_used": len(deduplicated),
+            "duplicates_removed": n_duplicates,
+            "train_rows": len(x_train),
+            "test_rows": len(x_test),
+            "test_size": config.TEST_SIZE,
+            "random_state": config.RANDOM_STATE,
+            "cv_folds": config.CV_FOLDS,
+            "search_iterations": config.N_SEARCH_ITERATIONS,
+            "scale_pos_weight": round(scale_pos_weight, 4),
+            "n_features_in": len(config.ALL_FEATURES),
+        }
+    )
+    tracking.log_metrics({"positive_rate_pct": 100 * float(target.mean())})
+
     # ------------------------------------------------------------ train + tune
     candidates = get_model_candidates(scale_pos_weight)
     tuned: dict[str, dict[str, Any]] = {}
+    test_rows: dict[str, dict[str, float]] = {}
+    roc_inputs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+
+    logger.info("=" * 78)
+    logger.info("TUNING AND TEST EVALUATION")
+
     for name, spec in candidates.items():
-        tuned[name] = tune_model(name, spec, x_train, y_train)
+        # Each candidate is its own nested run, so the MLflow UI can compare the
+        # three side by side rather than flattening them into one row. Tuning and
+        # test evaluation happen together inside that run, so every number for a
+        # given model lives on the same record.
+        with tracking.run(name, nested=True):
+            tracking.set_tags({"model_family": name, "rationale": spec["rationale"]})
+            result = tune_model(name, spec, x_train, y_train)
+            tuned[name] = result
+
+            pipeline = result["pipeline"]
+            proba = pipeline.predict_proba(x_test)[:, 1]
+            metrics = evaluation.compute_metrics(y_test, proba)
+            metrics.update(evaluation.measure_inference_latency(pipeline, x_test))
+            metrics["search_seconds"] = result["search_seconds"]
+            test_rows[name] = metrics
+            roc_inputs[name] = (y_test.to_numpy(), proba)
+
+            tracking.log_metrics({f"test_{key}": value for key, value in metrics.items()})
+            logger.info(
+                "%-20s acc %.4f | prec %.4f | rec %.4f | F1 %.4f | ROC-AUC %.4f | PR-AUC %.4f | %.2f ms",
+                name,
+                metrics["accuracy"],
+                metrics["precision"],
+                metrics["recall"],
+                metrics["f1"],
+                metrics["roc_auc"],
+                metrics["pr_auc"],
+                metrics["latency_median_ms"],
+            )
 
     tuning_comparison = pd.DataFrame(
         {
@@ -350,32 +447,6 @@ def main() -> dict[str, Any]:
     save_table(tuning_comparison, "model_tuning_comparison")
     visualisation.plot_tuning_comparison(tuning_comparison)
 
-    # ------------------------------------------------------- evaluate on test
-    logger.info("=" * 78)
-    logger.info("TEST SET EVALUATION")
-    test_rows: dict[str, dict[str, float]] = {}
-    roc_inputs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-
-    for name, result in tuned.items():
-        pipeline = result["pipeline"]
-        proba = pipeline.predict_proba(x_test)[:, 1]
-        metrics = evaluation.compute_metrics(y_test, proba)
-        metrics.update(evaluation.measure_inference_latency(pipeline, x_test))
-        metrics["search_seconds"] = result["search_seconds"]
-        test_rows[name] = metrics
-        roc_inputs[name] = (y_test.to_numpy(), proba)
-        logger.info(
-            "%-20s acc %.4f | prec %.4f | rec %.4f | F1 %.4f | ROC-AUC %.4f | PR-AUC %.4f | %.2f ms",
-            name,
-            metrics["accuracy"],
-            metrics["precision"],
-            metrics["recall"],
-            metrics["f1"],
-            metrics["roc_auc"],
-            metrics["pr_auc"],
-            metrics["latency_median_ms"],
-        )
-
     comparison = pd.DataFrame(test_rows).T
     save_table(comparison, "model_test_comparison")
     visualisation.plot_model_comparison(comparison, COMPARISON_METRICS)
@@ -388,6 +459,16 @@ def main() -> dict[str, Any]:
     best_proba = best_pipeline.predict_proba(x_test)[:, 1]
     logger.info("=" * 78)
     logger.info("SELECTED MODEL: %s (test PR-AUC %.4f)", best_name, comparison.loc[best_name, "pr_auc"])
+
+    tracking.set_tags({"selected_model": best_name})
+    tracking.log_params(
+        {
+            "selected_model": best_name,
+            "selection_rule": f"highest test {config.SEARCH_SCORING}",
+            "selected_rationale": tuned[best_name]["rationale"],
+            **tuned[best_name]["best_params"],
+        }
+    )
 
     # ------------------------------------------------------ threshold economics
     thresholds = evaluation.threshold_analysis(y_test, best_proba)
@@ -492,8 +573,34 @@ def main() -> dict[str, Any]:
     }
     save_json(metadata, config.METADATA_FILE)
 
+    # ------------------------------------------------------- record the session
+    # Metrics of the deployed configuration, so the MLflow run answers "what did
+    # we actually ship" and not merely "what did we try".
+    tracking.log_metrics(
+        {
+            "operating_threshold": operating_threshold,
+            "alt_threshold_max_value": value_threshold,
+            "model_size_mb": size_mb,
+            "expected_campaign_value_usd": metadata["expected_campaign_value_usd"],
+            **{f"final_{key}": value for key, value in final_metrics.items()},
+            **{f"confusion_{key}": value for key, value in cells.items()},
+            "leakage_pr_auc_with": leakage.loc["with_PageValues", "pr_auc"],
+            "leakage_pr_auc_without": leakage.loc["without_PageValues", "pr_auc"],
+        }
+    )
+    tracking.log_artifacts(
+        [config.MODEL_FILE, config.METADATA_FILE], subdirectory="model"
+    )
+    tracking.log_directory(config.FIGURES_DIR, subdirectory="figures")
+    tracking.log_directory(config.TABLES_DIR, subdirectory="tables")
+
     logger.info("=" * 78)
     logger.info("TRAINING COMPLETE - selected %s", best_name)
+    if tracking.is_enabled():
+        logger.info(
+            "Browse the run history with: mlflow ui --backend-store-uri %s",
+            config.MLFLOW_TRACKING_URI,
+        )
     logger.info("=" * 78)
     return metadata
 

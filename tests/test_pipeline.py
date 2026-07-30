@@ -539,6 +539,47 @@ def test_sensitivity_curve_rejects_a_categorical_feature(payload, model) -> None
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# Experiment tracking
+# --------------------------------------------------------------------------- #
+
+
+def test_tracking_never_breaks_training_when_disabled(monkeypatch) -> None:
+    """Every tracking call is a silent no-op when MLflow is switched off.
+
+    This is the property that matters: losing the experiment record is an
+    inconvenience, but a tracking failure must never take the training run with
+    it. CI installs only requirements.txt, where MLflow is absent, so this is
+    the path that actually runs there.
+    """
+    from src import tracking
+
+    monkeypatch.setenv(config.MLFLOW_DISABLED_ENV_VAR, "1")
+    assert tracking.is_enabled() is False
+
+    with tracking.run("disabled-run"):
+        tracking.log_params({"any": "value"})
+        tracking.log_metrics({"number": 1.0})
+        tracking.set_tags({"tag": "value"})
+        tracking.log_artifacts([config.MODEL_FILE])
+        with tracking.run("disabled-child", nested=True):
+            tracking.log_metrics({"nested": 2.0})
+
+
+def test_tracking_ignores_non_numeric_metrics(monkeypatch) -> None:
+    """Strings and booleans are dropped rather than raising in log_metrics."""
+    from src import tracking
+
+    monkeypatch.setenv(config.MLFLOW_DISABLED_ENV_VAR, "1")
+    tracking.log_metrics({"good": 1.5, "text": "not a number", "flag": True})
+
+
+def test_tracking_uri_is_sqlite_not_the_deprecated_file_store() -> None:
+    """MLflow 3.x refuses the './mlruns' file backend, so the URI must be SQLite."""
+    assert config.MLFLOW_TRACKING_URI.startswith("sqlite:///")
+    assert config.MLFLOW_TRACKING_URI.endswith(".db")
+
+
 def test_calibration_block_is_present_and_consistent(metadata) -> None:
     """The persisted calibration curve is well-formed and covers the test set."""
     calibration = metadata.get("calibration")

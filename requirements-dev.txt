@@ -12,10 +12,15 @@
 # training run still succeeds if this is missing.
 mlflow==3.14.0
 
-# Global SHAP importance table in src/train.py, guarded by try/except.
-# Per-prediction attribution in the app does NOT use this - it uses XGBoost's
-# own pred_contribs, which is why shap is absent from requirements.txt.
-shap==0.52.0
+# NOTE: `shap` is deliberately not listed, in development either.
+#
+# Its compiled extension segfaults on Linux against this xgboost and numpy
+# build. That took down the deployed Space once, and then the CI training job:
+# a segfault kills the interpreter, so the try/except guarding the import never
+# runs and the whole process dies. Both the per-session attribution in the app
+# and the global importance table in training now use XGBoost's own exact
+# TreeSHAP (`pred_contribs=True`), which produces identical values with no
+# extra native library to disagree with anything.
 
 # Test suite.
 pytest==9.1.1

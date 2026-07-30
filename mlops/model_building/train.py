@@ -303,35 +303,44 @@ def compute_feature_importance(pipeline: Pipeline, model_name: str) -> pd.Series
 def compute_shap_importance(pipeline: Pipeline, features: pd.DataFrame) -> pd.Series:
     """Compute mean absolute SHAP values for a tree-based pipeline.
 
-    SHAP attributes each prediction to its features additively, which supports
-    the per-session explanations shown in the application. Failure is tolerated
-    and logged rather than raised, since SHAP is an enhancement rather than a
-    requirement of the assignment.
+    Uses XGBoost's own exact TreeSHAP via ``pred_contribs=True`` rather than the
+    ``shap`` package. That is not a preference - the package's compiled
+    extension segfaulted on Linux against this xgboost and numpy build, taking
+    down first the deployed Space and then this training run in CI. A segfault
+    terminates the interpreter, so the ``except`` below never gets to run; the
+    only safe fix is not to load the library at all. The values are identical:
+    verified to the bit against the package before it was removed.
 
     Args:
-        pipeline: Fitted pipeline whose final step is a tree ensemble.
+        pipeline: Fitted pipeline whose final step is an XGBoost classifier.
         features: Raw feature rows to explain.
 
     Returns:
         Mean absolute SHAP value per transformed feature, or an empty Series.
     """
     try:
-        import shap
+        import xgboost as xgb
 
         transformed = pipeline.named_steps["preprocess"].transform(
             pipeline.named_steps["engineer"].transform(features)
         )
+        if hasattr(transformed, "toarray"):  # sparse one-hot output
+            transformed = transformed.toarray()
+        matrix = np.asarray(transformed, dtype=np.float32)
+
+        booster = pipeline.named_steps["classifier"].get_booster()
+        # One column per feature plus a trailing bias column, all in log-odds.
+        contributions = np.asarray(
+            booster.predict(xgb.DMatrix(matrix), pred_contribs=True)
+        )[:, :-1]
+
         names = get_feature_names(pipeline)
-        explainer = shap.TreeExplainer(pipeline.named_steps["classifier"])
-        values = explainer.shap_values(transformed)
-        if isinstance(values, list):
-            values = values[1]
         return (
-            pd.Series(np.abs(values).mean(axis=0), index=names)
+            pd.Series(np.abs(contributions).mean(axis=0), index=names)
             .sort_values(ascending=False)
         )
     except Exception as exc:  # pragma: no cover - optional enhancement
-        logger.warning("SHAP computation skipped: %s", exc)
+        logger.warning("SHAP importance skipped: %s", exc)
         return pd.Series(dtype=float)
 
 

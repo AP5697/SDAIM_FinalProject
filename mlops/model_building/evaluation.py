@@ -38,8 +38,8 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src import config
-from src.utils import get_logger
+from mlops.model_building import config  # noqa: E402
+from mlops.model_building.utils import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 

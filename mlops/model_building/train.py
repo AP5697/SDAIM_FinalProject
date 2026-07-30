@@ -2,7 +2,7 @@
 
 Run with::
 
-    python -m src.train
+    python -m mlops.model_building.train
 
 Produces ``models/model.joblib`` (the complete fitted pipeline),
 ``models/metadata.json`` (versions, metrics, operating threshold), every
@@ -28,10 +28,10 @@ from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, cross_v
 from sklearn.pipeline import Pipeline
 from xgboost import XGBClassifier
 
-from src import config, evaluation, tracking, visualisation
-from src.data_loader import load_raw_data, split_features_target, stratified_split
-from src.preprocessing import build_pipeline, get_feature_names, remove_duplicates
-from src.utils import get_logger, save_json, save_table
+from mlops.model_building import config, evaluation, tracking, visualisation  # noqa: E402
+from mlops.model_building.data_loader import load_raw_data, split_features_target, stratified_split  # noqa: E402
+from mlops.model_building.preprocessing import build_pipeline, get_feature_names, remove_duplicates  # noqa: E402
+from mlops.model_building.utils import get_logger, save_json, save_table  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -594,6 +594,8 @@ def _train(tracking_active: bool) -> dict[str, Any]:
     tracking.log_directory(config.FIGURES_DIR, subdirectory="figures")
     tracking.log_directory(config.TABLES_DIR, subdirectory="tables")
 
+    _export_run_history()
+
     logger.info("=" * 78)
     logger.info("TRAINING COMPLETE - selected %s", best_name)
     if tracking.is_enabled():
@@ -603,6 +605,25 @@ def _train(tracking_active: bool) -> dict[str, Any]:
         )
     logger.info("=" * 78)
     return metadata
+
+
+def _export_run_history() -> None:
+    """Refresh the committed run-history exports.
+
+    Run at the end of training so the files in ``mlops/mlflow/exports/`` always
+    describe the current store rather than needing a separate manual step. The
+    tracking database is gitignored, so these exports are what makes the
+    experiment history visible on GitHub and to the deployed application.
+
+    Failure is logged, not raised: the model is already saved by this point, and
+    an export problem must not fail a successful training run.
+    """
+    try:
+        from scripts.export_mlflow_runs import main as export_runs
+
+        export_runs()
+    except Exception as exc:  # pragma: no cover - reporting convenience only
+        logger.warning("Run-history export skipped: %s", exc)
 
 
 if __name__ == "__main__":

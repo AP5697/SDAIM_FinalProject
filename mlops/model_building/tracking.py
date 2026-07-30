@@ -27,8 +27,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from src import config
-from src.utils import get_logger
+from mlops.model_building import config  # noqa: E402
+from mlops.model_building.utils import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -69,6 +69,8 @@ def unavailable_reason() -> str:
 
 def _configure(mlflow: Any) -> None:
     """Point MLflow at the project's local SQLite store and artifact directory."""
+    # The SQLite file cannot be created inside a directory that does not exist.
+    config.MLFLOW_STORE_DIR.mkdir(parents=True, exist_ok=True)
     config.MLFLOW_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
 

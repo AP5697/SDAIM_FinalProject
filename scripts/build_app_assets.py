@@ -19,10 +19,10 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import config  # noqa: E402
-from src.data_loader import load_raw_data  # noqa: E402
-from src.preprocessing import remove_duplicates  # noqa: E402
-from src.utils import get_logger, save_json  # noqa: E402
+from mlops.model_building import config  # noqa: E402
+from mlops.model_building.data_loader import load_raw_data  # noqa: E402
+from mlops.model_building.preprocessing import remove_duplicates  # noqa: E402
+from mlops.model_building.utils import get_logger, save_json  # noqa: E402
 
 logger = get_logger(__name__)
 

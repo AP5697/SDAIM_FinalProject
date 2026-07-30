@@ -29,18 +29,20 @@ desktop.ini
 # Secrets - never commit a Hugging Face token
 .env
 
-# MLflow run history is local, not committed.
+# MLflow: the store is local, the exports beside it ARE committed.
 #
-# mlflow.db is a SQLite binary. GitHub push protection rejects it as a "Lob Test
-# API Key": in the raw page bytes a metric name sits flush against its 32-char
-# hex run id, so `test_f1` + `e70688...f42` reads as `test_<32 hex>`, which is
-# exactly Lob's key format. It is a false positive, but bypassing the scanner to
-# commit a regenerable binary is the wrong trade - `python -m src.train`
-# rebuilds the whole store, and it is derived data either way.
+# mlops/mlflow/store/mlflow.db is a SQLite binary. GitHub push protection
+# rejects it as a "Lob Test API Key": in the raw page bytes a metric name sits
+# flush against its 32-char hex run id, so `test_f1` + `e70688...f42` reads as
+# `test_<32 hex>`, exactly Lob's key format. It is a false positive, but the
+# database is regenerable derived data and allowlisting a scanner hit to commit
+# a binary is the wrong habit. mlops/mlflow/exports/ carries the run history
+# instead, in formats that need neither MLflow nor a scanner exception.
+mlops/mlflow/store/
+
+# Legacy locations from before the mlops/ restructure.
 mlflow.db
 mlartifacts/
-
-# Deprecated MLflow file-store layout; MLflow 3.x refuses to write to it.
 mlruns/
 .env.*
 *.token

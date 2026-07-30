@@ -15,8 +15,8 @@ from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src import config
-from src.utils import get_logger
+from mlops.model_building import config  # noqa: E402
+from mlops.model_building.utils import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 

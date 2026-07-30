@@ -6,7 +6,7 @@ colorTo: indigo
 sdk: streamlit
 sdk_version: 1.59.1
 python_version: "3.12"
-app_file: app.py
+app_file: mlops/deployment/app.py
 pinned: false
 license: mit
 short_description: Predict purchase intent from a live browsing session
@@ -97,7 +97,7 @@ Forest at inference — a decision that matters for a real-time scoring UI.
 git clone <your-repo-url>
 cd Final_project
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run mlops/deployment/app.py
 ```
 
 To reproduce the model from scratch:
@@ -105,7 +105,7 @@ To reproduce the model from scratch:
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
 python -m scripts.run_eda
-python -m src.train
+python -m mlops.model_building.train
 python -m scripts.add_calibration
 python -m scripts.build_app_assets
 python -m pytest tests/ -v
@@ -113,11 +113,11 @@ python -m pytest tests/ -v
 
 ## Experiment tracking (MLflow)
 
-`python -m src.train` records every training session to a local MLflow store.
+`python -m mlops.model_building.train` records every training session to a local MLflow store.
 Browse it with:
 
 ```bash
-mlflow ui --backend-store-uri sqlite:///mlflow.db
+mlflow ui --backend-store-uri sqlite:///mlops/mlflow/store/mlflow.db
 ```
 
 Each session is one **parent run** holding the dataset shape, the split, the
@@ -125,8 +125,8 @@ selection decision and the deployed configuration, with one **nested child run
 per candidate model** carrying its hyperparameter search result and held-out
 test metrics — so the three models are directly comparable in the UI.
 
-The store is generated locally and is not committed — run `python -m src.train`
-once and `mlflow.db` plus `mlartifacts/` appear, then open the UI above.
+The store is generated locally and is not committed — run `python -m mlops.model_building.train`
+once and `mlops/mlflow/store/` appears, then open the UI above.
 
 Three decisions worth noting:
 
@@ -139,7 +139,7 @@ Three decisions worth noting:
   `test_<32 hex>` key format exactly. It is a false positive, but the database
   is regenerable derived data, so ignoring it beats teaching the scanner to be
   ignored.
-- **Tracking cannot break training.** Every call in `src/tracking.py` degrades
+- **Tracking cannot break training.** Every call in `mlops/model_building/tracking.py` degrades
   to a no-op if MLflow is missing, disabled via `MLFLOW_DISABLED=1`, or raises.
   Losing the experiment record is an inconvenience; losing the training run is
   not. This is also why MLflow is in `requirements-dev.txt` and not
@@ -150,36 +150,55 @@ Three decisions worth noting:
 
 ```
 Final_project/
-├── app.py                      # Streamlit application (HF Space entry point)
+├── README.md                   # This file; HF Space config in the front-matter
 ├── requirements.txt            # Exactly pinned runtime dependencies (the Space)
 ├── requirements-dev.txt        # Training, MLflow and test dependencies only
-├── README.md                   # This file; HF Space config in the front-matter
-├── models/
+│
+├── mlops/                      # The pipeline, organised by stage
+│   ├── data/raw/               # Source CSV (committed for reproducibility)
+│   │
+│   ├── model_building/         # STAGE 1 - everything that produces the model
+│   │   ├── config.py           # All paths, constants, feature groups, search spaces
+│   │   ├── data_loader.py      # Acquisition, validation, stratified splitting
+│   │   ├── preprocessing.py    # Cleaning, feature engineering, ColumnTransformer
+│   │   ├── train.py            # Training, tuning, selection, leakage experiment
+│   │   ├── evaluation.py       # Metrics, threshold economics, error analysis
+│   │   ├── visualisation.py    # All figure generation
+│   │   ├── tracking.py         # MLflow logging, no-op if MLflow is absent
+│   │   └── utils.py            # Logging, timing, artifact persistence
+│   │
+│   ├── deployment/             # STAGE 2 - everything that serves the model
+│   │   ├── app.py              # Streamlit application (HF Space entry point)
+│   │   └── inference.py        # Thin wrapper the app imports
+│   │
+│   └── mlflow/                 # STAGE 3 - experiment tracking
+│       ├── README.md           # What is recorded and how to browse it
+│       ├── exports/            # Committed run history (CSV, markdown, JSON)
+│       └── store/              # SQLite database + artifacts (gitignored)
+│
+├── models/                     # The single deployment artifact
 │   ├── model.joblib            # Complete fitted pipeline (preprocessing + model)
 │   ├── metadata.json           # Versions, metrics, threshold, provenance
 │   └── app_schema.json         # Data-derived widget bounds and presets
-├── src/
-│   ├── config.py               # All paths, constants, feature groups, search spaces
-│   ├── data_loader.py          # Acquisition, validation, stratified splitting
-│   ├── preprocessing.py        # Cleaning, feature engineering, ColumnTransformer
-│   ├── train.py                # Training, tuning, selection, leakage experiment
-│   ├── evaluation.py           # Metrics, threshold economics, error analysis
-│   ├── visualisation.py        # All figure generation
-│   ├── inference.py            # Thin wrapper the app imports
-│   ├── tracking.py             # MLflow logging, no-op if MLflow is absent
-│   └── utils.py                # Logging, timing, artifact persistence
+│
 ├── scripts/
 │   ├── run_eda.py              # Full EDA run
 │   ├── build_app_assets.py     # Derives UI schema from the training data
-│   └── add_calibration.py      # Measures the calibration curve on the test split
+│   ├── add_calibration.py      # Measures the calibration curve on the test split
+│   └── export_mlflow_runs.py   # Writes the committed MLflow run history
+│
 ├── tests/test_pipeline.py      # 47 tests against the real artifact
-├── data/raw/                   # Source CSV (committed for reproducibility)
 ├── reports/figures/            # 16 generated figures
 ├── reports/tables/             # 15 generated result tables
 ├── docs/                       # Presentation script and workflow one-pager
 ├── .streamlit/config.toml      # Theme and upload limits
 └── .github/workflows/deploy.yml
 ```
+
+`README.md` and `requirements.txt` stay at the repository root because Hugging
+Face reads the Space configuration from the root README's front-matter and
+installs dependencies from the root requirements file. The front-matter's
+`app_file` therefore points at `mlops/deployment/app.py`.
 
 ## Dataset
 

@@ -16,7 +16,7 @@ from typing import Any, Iterator
 
 import pandas as pd
 
-from src import config
+from mlops.model_building import config  # noqa: E402
 
 _CONFIGURED: bool = False
 

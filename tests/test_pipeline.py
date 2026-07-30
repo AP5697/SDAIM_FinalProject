@@ -1,7 +1,7 @@
 """End-to-end tests against the real trained artifact.
 
 These are deliberately not unit tests with mocked models. Every assertion runs
-against ``models/model.joblib`` as actually produced by ``python -m src.train``,
+against ``models/model.joblib`` as actually produced by ``python -m mlops.model_building.train``,
 because the failure mode this project most needs to catch is a serialised
 pipeline that no longer loads or predicts in the deployment environment.
 
@@ -21,7 +21,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import config, inference  # noqa: E402
+from mlops.model_building import config  # noqa: E402
+from mlops.deployment import inference  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -243,7 +244,7 @@ def test_batch_matches_single_prediction(schema, model, metadata) -> None:
 @pytest.fixture(scope="module")
 def real_rows():
     """Return real dataset rows at their native dtypes."""
-    from src.data_loader import load_raw_data
+    from mlops.model_building.data_loader import load_raw_data
 
     return load_raw_data().head(120)[config.ALL_FEATURES]
 
@@ -552,7 +553,7 @@ def test_tracking_never_breaks_training_when_disabled(monkeypatch) -> None:
     it. CI installs only requirements.txt, where MLflow is absent, so this is
     the path that actually runs there.
     """
-    from src import tracking
+    from mlops.model_building import tracking
 
     monkeypatch.setenv(config.MLFLOW_DISABLED_ENV_VAR, "1")
     assert tracking.is_enabled() is False
@@ -568,10 +569,61 @@ def test_tracking_never_breaks_training_when_disabled(monkeypatch) -> None:
 
 def test_tracking_ignores_non_numeric_metrics(monkeypatch) -> None:
     """Strings and booleans are dropped rather than raising in log_metrics."""
-    from src import tracking
+    from mlops.model_building import tracking
 
     monkeypatch.setenv(config.MLFLOW_DISABLED_ENV_VAR, "1")
     tracking.log_metrics({"good": 1.5, "text": "not a number", "flag": True})
+
+
+def test_mlflow_folder_can_never_shadow_the_mlflow_library() -> None:
+    """The mlops/mlflow directory must not become an importable package.
+
+    A directory named ``mlflow`` is only dangerous if Python can import it. This
+    one is nested inside ``mlops/`` rather than sitting at the repository root,
+    so it is not on ``sys.path`` - but an ``__init__.py`` appearing here would
+    still make ``mlops.mlflow`` a package and invites someone to later move it
+    up a level. Empirically, a root-level ``mlflow/`` with an ``__init__.py``
+    causes ``import mlflow`` to resolve to the folder and every training run to
+    fail, so this is cheap insurance against a confusing outage.
+    """
+    assert not (config.MLFLOW_DIR / "__init__.py").exists(), (
+        f"{config.MLFLOW_DIR / '__init__.py'} would make this directory a package."
+    )
+    assert not (config.PROJECT_ROOT / "mlflow").exists(), (
+        "A top-level mlflow/ directory can shadow the installed MLflow library."
+    )
+
+    import mlflow as mlflow_library
+
+    assert "site-packages" in str(mlflow_library.__file__), (
+        f"mlflow resolved to {mlflow_library.__file__}, not the installed library."
+    )
+
+
+def test_deployed_app_never_imports_mlflow_or_shap() -> None:
+    """The Space installs neither, so importing them at runtime would crash it.
+
+    shap already took the application down once with a segfault, which no
+    try/except can catch. This asserts the runtime import graph stays clean.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; "
+            "sys.argv=['app']; "
+            "import mlops.deployment.inference; "
+            "print(any(m == 'mlflow' or m.startswith('mlflow.') for m in sys.modules), "
+            "any(m == 'shap' or m.startswith('shap.') for m in sys.modules))",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(config.PROJECT_ROOT),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith("False False"), result.stdout
 
 
 def test_tracking_uri_is_sqlite_not_the_deprecated_file_store() -> None:

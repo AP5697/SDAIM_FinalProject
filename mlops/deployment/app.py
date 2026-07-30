@@ -10,7 +10,7 @@ encoding used during training.
 
 Run locally with::
 
-    streamlit run app.py
+    streamlit run mlops/deployment/app.py
 """
 
 from __future__ import annotations
@@ -23,11 +23,15 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+# This file is mlops/deployment/app.py, so the repository root - the directory
+# the `mlops` package is importable from - is two levels up. Streamlit runs this
+# as a script rather than a module, so the root is not on sys.path by default.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src import config, inference  # noqa: E402
+from mlops.model_building import config  # noqa: E402
+from mlops.deployment import inference  # noqa: E402
 
 APP_TITLE = "Purchase Intent Scorer"
 APP_ICON = "🛒"
@@ -380,7 +384,7 @@ def render_result(result: inference.PredictionResult, baseline_rate: float) -> N
     """Render the prediction outcome card.
 
     Args:
-        result: Prediction returned by :func:`src.inference.predict`.
+        result: Prediction returned by :func:`mlops.deployment.inference.predict`.
         baseline_rate: Overall conversion rate, as a percentage.
     """
     probability_pct = 100 * result.probability
@@ -800,7 +804,7 @@ def page_insights(metadata: dict[str, Any]) -> None:
     render_header("How the deployed model performs, and what it learned.")
 
     if not metadata:
-        st.warning("No training metadata found. Run `python -m src.train` to generate it.")
+        st.warning("No training metadata found. Run `python -m mlops.model_building.train` to generate it.")
         return
 
     metrics = metadata.get("metrics_at_operating_threshold", {})
@@ -919,6 +923,8 @@ def page_insights(metadata: dict[str, Any]) -> None:
 
         st.info(calibration.get("interpretation", ""))
 
+    render_experiment_tracking()
+
     leakage = metadata.get("leakage_experiment", {})
     if leakage:
         st.markdown("##### Leakage experiment: the PageValues question")
@@ -928,6 +934,87 @@ def page_insights(metadata: dict[str, Any]) -> None:
             "below refits the identical model without it to quantify the dependence."
         )
         st.dataframe(pd.DataFrame(leakage).T, width='stretch')
+
+
+@st.cache_data(show_spinner=False)
+def load_experiment_runs() -> pd.DataFrame:
+    """Load the exported MLflow run history.
+
+    Reads the committed CSV rather than querying a tracking server, so the
+    deployed Space renders the experiment history without MLflow being installed
+    on it. Returns an empty frame when the export is absent.
+    """
+    path = config.MLFLOW_RUNS_CSV
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except Exception:  # pragma: no cover - a malformed export must not break the page
+        return pd.DataFrame()
+
+
+def render_experiment_tracking() -> None:
+    """Render the MLflow run comparison recorded during training."""
+    runs = load_experiment_runs()
+    if runs.empty:
+        return
+
+    st.divider()
+    st.markdown("##### Experiment tracking (MLflow)")
+    st.markdown(
+        "Every training session is recorded to MLflow: one run for the session "
+        "and one nested run per candidate model. The table below is exported "
+        "from that store, so this page shows the real search history rather than "
+        "a hand-written summary."
+    )
+
+    models = runs[runs.get("is_model_run", False) == True]  # noqa: E712
+    columns = {
+        "run_name": "model",
+        "metrics.cv_pr_auc_baseline": "CV PR-AUC (baseline)",
+        "metrics.cv_pr_auc_tuned": "CV PR-AUC (tuned)",
+        "metrics.test_pr_auc": "test PR-AUC",
+        "metrics.test_roc_auc": "test ROC-AUC",
+        "metrics.test_recall": "test recall",
+        "metrics.test_latency_median_ms": "latency (ms)",
+    }
+    present = {k: v for k, v in columns.items() if k in models.columns}
+
+    if not models.empty and present:
+        table = models[list(present)].rename(columns=present)
+        if "test PR-AUC" in table.columns:
+            table = table.sort_values("test PR-AUC", ascending=False)
+        st.dataframe(
+            table.style.format(
+                {c: "{:.4f}" for c in table.columns if c != "model"}
+            ).highlight_max(
+                axis=0,
+                subset=[c for c in table.columns if c.startswith(("CV", "test"))],
+                color="#dcfce7",
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+
+    sessions = runs[runs.get("is_model_run", True) == False]  # noqa: E712
+    if not sessions.empty:
+        latest = sessions.iloc[-1]
+        bits = []
+        for key, label in [
+            ("metrics.positive_rate_pct", "positive rate %"),
+            ("metrics.operating_threshold", "threshold"),
+            ("metrics.model_size_mb", "model MB"),
+        ]:
+            if key in sessions.columns and pd.notna(latest.get(key)):
+                bits.append(f"{label} {latest[key]:g}")
+        if bits:
+            st.caption("Session record: " + " · ".join(bits))
+
+    st.caption(
+        "Exported from the MLflow store by `scripts/export_mlflow_runs.py`. "
+        "The application reads this CSV and never imports MLflow, so the "
+        "tracking dependency stays out of the deployed environment."
+    )
 
 
 def page_about(metadata: dict[str, Any], schema: dict[str, Any]) -> None:

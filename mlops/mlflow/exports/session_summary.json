@@ -1,0 +1,35 @@
+{
+  "experiment": "purchase-intent-scorer",
+  "n_session_runs": 1,
+  "n_model_runs": 3,
+  "models": {
+    "XGBoost": {
+      "CV PR-AUC (baseline)": 0.7231829130710589,
+      "CV PR-AUC (tuned)": 0.7539728929333233,
+      "Test PR-AUC": 0.7546,
+      "Test ROC-AUC": 0.9367,
+      "Test F1": 0.6702,
+      "Test recall": 0.8377,
+      "Latency (ms)": 8.178
+    },
+    "Random Forest": {
+      "CV PR-AUC (baseline)": 0.7173852896272296,
+      "CV PR-AUC (tuned)": 0.7515119024181226,
+      "Test PR-AUC": 0.7428,
+      "Test ROC-AUC": 0.9328,
+      "Test F1": 0.6589,
+      "Test recall": 0.8115,
+      "Latency (ms)": 32.19
+    },
+    "Logistic Regression": {
+      "CV PR-AUC (baseline)": 0.645930188790097,
+      "CV PR-AUC (tuned)": 0.6552421427990298,
+      "Test PR-AUC": 0.6701,
+      "Test ROC-AUC": 0.9157,
+      "Test F1": 0.6475,
+      "Test recall": 0.7644,
+      "Latency (ms)": 4.677
+    }
+  },
+  "selected_model": "XGBoost"
+}

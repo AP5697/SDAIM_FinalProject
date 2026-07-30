@@ -22,10 +22,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import config, evaluation, inference  # noqa: E402
-from src.data_loader import load_raw_data, split_features_target, stratified_split  # noqa: E402
-from src.preprocessing import remove_duplicates  # noqa: E402
-from src.utils import get_logger, save_json  # noqa: E402
+from mlops.model_building import config, evaluation  # noqa: E402
+from mlops.deployment import inference  # noqa: E402
+from mlops.model_building.data_loader import load_raw_data, split_features_target, stratified_split  # noqa: E402
+from mlops.model_building.preprocessing import remove_duplicates  # noqa: E402
+from mlops.model_building.utils import get_logger, save_json  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -100,7 +101,7 @@ def main() -> dict[str, Any]:
     metadata = inference.load_metadata()
     if not metadata:
         raise FileNotFoundError(
-            f"No metadata at {config.METADATA_FILE}. Train first: python -m src.train"
+            f"No metadata at {config.METADATA_FILE}. Train first: python -m mlops.model_building.train"
         )
 
     metadata["calibration"] = build_calibration()

@@ -18,9 +18,13 @@ from typing import Any, Final
 # Paths
 # --------------------------------------------------------------------------- #
 
-PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
+# This module lives at mlops/model_building/config.py, so the repository root is
+# two levels up. README.md and requirements.txt must stay at that root: Hugging
+# Face reads the Space configuration from the root README's front-matter.
+PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
+MLOPS_DIR: Final[Path] = PROJECT_ROOT / "mlops"
 
-DATA_DIR: Final[Path] = PROJECT_ROOT / "data"
+DATA_DIR: Final[Path] = MLOPS_DIR / "data"
 RAW_DATA_DIR: Final[Path] = DATA_DIR / "raw"
 PROCESSED_DATA_DIR: Final[Path] = DATA_DIR / "processed"
 
@@ -91,11 +95,28 @@ HF_SPACE_URL: Final[str] = "https://huggingface.co/spaces/Aishawarya/SDAIM_Final
 # SQLite is the supported local backend and is what `mlflow ui` expects here.
 # --------------------------------------------------------------------------- #
 
-MLFLOW_DB_FILE: Final[Path] = PROJECT_ROOT / "mlflow.db"
+# Everything MLflow lives under mlops/mlflow/. The store is regenerable and is
+# gitignored; the exports beside it are committed, so the run history is visible
+# on GitHub and to the deployed app without anyone installing MLflow.
+#
+# Note this directory is NOT importable as `mlflow` - it sits inside the mlops
+# package, not on sys.path - so it cannot shadow the installed library. A folder
+# named `mlflow/` at the repository root would, the moment it gained an
+# __init__.py, and there is a test guarding against exactly that.
+MLFLOW_DIR: Final[Path] = MLOPS_DIR / "mlflow"
+MLFLOW_STORE_DIR: Final[Path] = MLFLOW_DIR / "store"
+MLFLOW_EXPORT_DIR: Final[Path] = MLFLOW_DIR / "exports"
+
+MLFLOW_DB_FILE: Final[Path] = MLFLOW_STORE_DIR / "mlflow.db"
 # SQLAlchemy URL form; as_posix() keeps the Windows drive letter valid in a URI.
 MLFLOW_TRACKING_URI: Final[str] = f"sqlite:///{MLFLOW_DB_FILE.as_posix()}"
-MLFLOW_ARTIFACT_DIR: Final[Path] = PROJECT_ROOT / "mlartifacts"
+MLFLOW_ARTIFACT_DIR: Final[Path] = MLFLOW_STORE_DIR / "artifacts"
 MLFLOW_EXPERIMENT_NAME: Final[str] = "purchase-intent-scorer"
+
+# Exported run history, committed so it is readable without MLflow installed.
+MLFLOW_RUNS_CSV: Final[Path] = MLFLOW_EXPORT_DIR / "runs_summary.csv"
+MLFLOW_RUNS_MARKDOWN: Final[Path] = MLFLOW_EXPORT_DIR / "model_comparison.md"
+MLFLOW_SESSION_JSON: Final[Path] = MLFLOW_EXPORT_DIR / "session_summary.json"
 
 # Set MLFLOW_DISABLED=1 to skip tracking entirely, for example in CI where the
 # run history would be discarded with the runner anyway.
@@ -153,14 +174,14 @@ CATEGORICAL_FEATURES: Final[list[str]] = (
 ALL_FEATURES: Final[list[str]] = TRUE_NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 # Features whose value is only knowable after (or partly because of) a
-# conversion. See src/train.py::run_leakage_experiment for the empirical test.
+# conversion. See mlops/model_building/train.py::run_leakage_experiment for the empirical test.
 #
 # PageValues is computed by Google Analytics as the transaction revenue plus
 # goal value attributable to a page, divided by unique pageviews. Its numerator
 # is therefore partly derived from the very purchase event we are predicting.
 LEAKAGE_CANDIDATE_FEATURES: Final[list[str]] = ["PageValues"]
 
-# Engineered features created in src/preprocessing.py.
+# Engineered features created in mlops/model_building/preprocessing.py.
 ENGINEERED_FEATURES: Final[list[str]] = [
     "TotalPages",
     "TotalDuration",

@@ -22,8 +22,8 @@ from sklearn.metrics import (  # noqa: E402
     roc_curve,
 )
 
-from src import config  # noqa: E402
-from src.utils import get_logger  # noqa: E402
+from mlops.model_building import config  # noqa: E402
+from mlops.model_building.utils import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 

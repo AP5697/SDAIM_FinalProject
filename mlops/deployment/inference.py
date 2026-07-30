@@ -18,8 +18,8 @@ import joblib
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
-from src import config
-from src.utils import get_logger
+from mlops.model_building import config  # noqa: E402
+from mlops.model_building.utils import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -114,7 +114,7 @@ def load_model(path: Path | None = None) -> Pipeline:
     if not path.exists():
         raise FileNotFoundError(
             f"Model artifact not found at {path}. Train it first with:\n"
-            f"    python -m src.train"
+            f"    python -m mlops.model_building.train"
         )
 
     model = joblib.load(path)

@@ -62,7 +62,9 @@ jobs:
 
       - name: Confirm required deployment files exist
         run: |
-          for file in app.py requirements.txt README.md models/model.joblib \
+          for file in mlops/deployment/app.py requirements.txt README.md \
+                      mlops/deployment/inference.py mlops/model_building/config.py \
+                      models/model.joblib \
                       models/metadata.json models/app_schema.json; do
             if [ ! -f "$file" ]; then
               echo "::error::Required deployment file is missing: $file"
@@ -134,7 +136,7 @@ jobs:
         # requirements.txt, which would otherwise fail on the live Space.
         run: |
           python -c "
-          from src.inference import model_health
+          from mlops.deployment.inference import model_health
           health = model_health()
           print(health)
           raise SystemExit(0 if health['ok'] else 1)
@@ -223,26 +225,38 @@ jobs:
 
           # Only the files the Space needs to run. The dataset, notebooks,
           # reports and CI configuration stay in GitHub and are never uploaded.
+          # Only the files the Space needs to run. README.md and requirements.txt
+          # must stay at the repository root - Hugging Face reads the Space
+          # configuration from the root README's front-matter and installs from
+          # the root requirements file. Everything else lives under mlops/, and
+          # `app_file` in that front-matter points at mlops/deployment/app.py.
           allow = [
-              "app.py",
-              "requirements.txt",
               "README.md",
-              "src/*.py",
+              "requirements.txt",
+              ".streamlit/config.toml",
+              "mlops/__init__.py",
+              "mlops/deployment/*.py",
+              "mlops/model_building/*.py",
+              # Exported MLflow history; the app renders it without importing MLflow.
+              "mlops/mlflow/exports/*",
               "models/model.joblib",
               "models/metadata.json",
               "models/app_schema.json",
-              ".streamlit/config.toml",
           ]
 
-          # Files that must NOT survive on the Space. "src/*" and "models/*"
-          # clear artifacts from previous deploys, so a renamed or deleted module
-          # does not linger and get imported. The Docker entries remove the
-          # scaffolding of the Streamlit-on-Docker template this Space was
-          # created from: leaving a Dockerfile next to `sdk: streamlit` gives the
-          # Space two conflicting sets of build instructions.
+          # Files that must NOT survive on the Space. The mlops/ and models/
+          # entries clear artifacts from previous deploys, so a renamed or
+          # deleted module does not linger and get imported. "src/*" and the
+          # root app.py remove the pre-restructure layout still present on the
+          # Space from earlier deploys. The Docker entries remove the scaffolding
+          # of the Streamlit-on-Docker template this Space was created from:
+          # leaving a Dockerfile next to `sdk: streamlit` gives the Space two
+          # conflicting sets of build instructions.
           delete = [
-              "src/*",
+              "mlops/*",
               "models/*",
+              "src/*",
+              "app.py",
               "Dockerfile",
               ".dockerignore",
           ]

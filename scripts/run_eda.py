@@ -22,14 +22,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sklearn.feature_selection import mutual_info_classif  # noqa: E402
 
-from src import config, visualisation  # noqa: E402
-from src.data_loader import load_raw_data  # noqa: E402
-from src.preprocessing import (  # noqa: E402
+from mlops.model_building import config, visualisation  # noqa: E402
+from mlops.model_building.data_loader import load_raw_data  # noqa: E402
+from mlops.model_building.preprocessing import (  # noqa: E402
     add_engineered_features,
     remove_duplicates,
     summarise_missingness,
 )
-from src.utils import get_logger, save_json, save_table  # noqa: E402
+from mlops.model_building.utils import get_logger, save_json, save_table  # noqa: E402
 
 logger = get_logger(__name__)
 
